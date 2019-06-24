@@ -1,0 +1,36 @@
+dist: xenial
+
+sudo: true
+
+language:
+  - c
+
+addons:
+  apt:
+    packages:
+      - build-essential
+      - git
+      - libnl-genl-3-dev
+      - autoconf
+      - automake
+      - libtool
+      - pkg-config
+
+script:
+  - sudo sh -c "apt update && apt install -y linux-headers-`uname -r`"
+  - git clone git@github.com:friedtco/greybus.git
+  - autoreconf --force --install
+  - GBDIR=`pwd`/greybus ./configure
+  - make -j`nproc --all`
+
+notifications:
+  email: false
+
+#deploy:
+#  - provider: releases
+#    api_key: "${GH_TOKEN}"
+#    file:
+#      - foo.tar.xz
+#    skip_cleanup: true
+#    on:
+#      tags: true
