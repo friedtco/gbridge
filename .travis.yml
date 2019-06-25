@@ -12,6 +12,7 @@ addons:
     - automake
     - libtool
     - pkg-config
+    - libbluetooth-dev
 script:
 - sudo sh -c "apt update && apt install -y linux-headers-`uname -r`"
 - git clone https://${GBTOKEN}@github.com/friedtco/greybus.git
