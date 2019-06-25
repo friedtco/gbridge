@@ -71,7 +71,12 @@ int main(int argc, char *argv[])
 			}
 			break;
 		case 'm':
+#if defined(GBSIM)
 			ret = register_gbsim_controller(optarg);
+#else
+			pr_err("gbsim is not enabled\n");
+			ret = -ENOSYS;
+#endif /* defined(GBSIM) */
 			if (ret)
 				return ret;
 			break;
