@@ -15,7 +15,7 @@ addons:
     - libbluetooth-dev
 script:
 - sudo sh -c "apt update && apt install -y linux-headers-`uname -r`"
-- git clone https://${GBTOKEN}@github.com/friedtco/greybus.git
+- git clone -b feature/1/greybus-automated-builds https://${GBTOKEN}@github.com/friedtco/greybus.git
 - autoreconf --force --install
 - GBDIR=`pwd`/greybus ./configure
 - make -j`nproc --all`
