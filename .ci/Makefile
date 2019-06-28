@@ -34,75 +34,71 @@ DROPBEAR         = dropbear-$(DROPBEAR_VER)
 DROPBEAR_ARCHIVE = $(DROPBEAR).tar.bz2
 CLEANFILES      += $(DROPBEAR) $(DROPBEAR_ARCHIVE)
 
-all: $(KERNEL)/vmlinux $(BUSYBOX)/busybox $(DROPBEAR)/dropbear
+# variables for building initramfs
+INITRAMFS          = initramfs
+INITRAMFS_ARCHIVE  = initramfs.cpio.gz
+CLEANFILES        += $(INITRAMFS) $(INITRAMFS_ARCHIVE)
+
+all: $(KERNEL)/vmlinux $(INITRAMFS_ARCHIVE)
 
 # rules to build the Linux kernel
 $(KERNEL_ARCHIVE):
-	KERNEL_TMP="`mktemp -p .`"; \
-	curl -L "$(KERNEL_URL)" -o $$KERNEL_TMP; \
-	if [ $$? -ne 0 ]; then \
-		rm -f $$KERNEL_TMP; exit 1; \
-	fi; \
-	mv $$KERNEL_TMP $@
+	curl -L "$(KERNEL_URL)" -o $@
 
 $(KERNEL): $(KERNEL_ARCHIVE)
-	KERNEL_TMP="`mktemp -d -p .`" && tar xpzf $(KERNEL_ARCHIVE) -C "$$KERNEL_TMP"; \
-	if [ $$? -ne 0 ]; then \
-		rm -Rf $$KERNEL_TMP; exit 1; \
-	else \
-		mv $$KERNEL_TMP/$(KERNEL) .; rm -Rf $$KERNEL_TMP; \
-	fi
+	tar xpzf $<
 
 $(KERNEL)/.config: $(KERNEL_CONFIG) $(KERNEL)
-	cp $(KERNEL_CONFIG) $(KERNEL)/.config
+	cp $< $@
 
-$(KERNEL)/vmlinux: $(KERNEL)/.config
-	$(MAKE) -C $(KERNEL) vmlinux
+$(KERNEL)/vmlinux: $(KERNEL) $(KERNEL)/.config
+	$(MAKE) -C $< $(notdir $@)
 
 # rules to build busybox
 $(BUSYBOX_ARCHIVE):
-	BUSYBOX_TMP="`mktemp -p .`"; \
-	curl -L "$(BUSYBOX_URL)" -o $$BUSYBOX_TMP; \
-	if [ $$? -ne 0 ]; then \
-		rm -f $$BUSYBOX_TMP; exit 1; \
-	fi; \
-	mv $$BUSYBOX_TMP $@
+	curl -L "$(BUSYBOX_URL)" -o $@
 
 $(BUSYBOX): $(BUSYBOX_ARCHIVE)
-	BUSYBOX_TMP="`mktemp -d -p .`" && tar xpjf $(BUSYBOX_ARCHIVE) -C "$$BUSYBOX_TMP"; \
-	if [ $$? -ne 0 ]; then \
-		rm -Rf $$BUSYBOX_TMP; exit 1; \
-	else \
-		mv $$BUSYBOX_TMP/$(BUSYBOX) .; rm -Rf $$BUSYBOX_TMP; \
-	fi
+	tar xpjf $<
 
 $(BUSYBOX)/.config: $(BUSYBOX_CONFIG) $(BUSYBOX)
-	cp $(BUSYBOX_CONFIG) $(BUSYBOX)/.config
+	cp $< $@
 
-$(BUSYBOX)/busybox: $(BUSYBOX)/.config
-	$(MAKE) -C $(BUSYBOX)
+$(BUSYBOX)/busybox: $(BUSYBOX) $(BUSYBOX)/.config
+	$(MAKE) -C $<
 
 # rules to build dropbear
 $(DROPBEAR_ARCHIVE):
-	DROPBEAR_TMP="`mktemp -p .`"; \
-	curl -L "$(DROPBEAR_URL)" -o $$DROPBEAR_TMP; \
-	if [ $$? -ne 0 ]; then \
-		rm -f $$DROPBEAR_TMP; exit 1; \
-	fi; \
-	mv $$DROPBEAR_TMP $@
+	curl -L "$(DROPBEAR_URL)" -o $@
 
 $(DROPBEAR): $(DROPBEAR_ARCHIVE)
-	DROPBEAR_TMP="`mktemp -d -p .`" && tar xpjf $(DROPBEAR_ARCHIVE) -C "$$DROPBEAR_TMP"; \
-	if [ $$? -ne 0 ]; then \
-		rm -Rf $$DROPBEAR_TMP; exit 1; \
-	else \
-		mv $$DROPBEAR_TMP/$(DROPBEAR) .; rm -Rf $$DROPBEAR_TMP; \
-	fi
+	tar xpjf $<
 
 $(DROPBEAR)/dropbear: $(DROPBEAR)
-	cd $(DROPBEAR) && ./configure --enable-static
-	$(MAKE) -C $(DROPBEAR)
+	cd $< && ./configure --enable-static
+	$(MAKE) -C $<
+
+# rules to build initramfs
+$(INITRAMFS): $(BUSYBOX)/busybox $(DROPBEAR)/dropbear
+	mkdir -p \
+		$@/bin \
+		$@/sbin \
+		$@/etc/init.d \
+		$@/proc \
+		$@/sys \
+		$@/usr/bin \
+		$@/usr/sbin \
+		$@/usr/share/udhcpc
+	cd $@/bin && ln -sf /bin/busybox sh
+	cd $@ && ln -sf /bin/busybox init
+	cp $(BUSYBOX)/busybox $@/bin
+	cp $(BUSYBOX)/examples/udhcp/simple.script $@/usr/share/udhcpc/default.script
+	cp busybox-rcS.sh $@/etc/init.d/rcS
+	chmod +x $@/etc/init.d/rcS
+	cp $(DROPBEAR)/dropbear $@/bin
+
+$(INITRAMFS_ARCHIVE): $(INITRAMFS)
+	cd $< && find . -print0 | cpio --null -ov --format=newc | gzip -9 > ../$@
 
 clean:
 	rm -Rf $(CLEANFILES)
-
