@@ -25,6 +25,9 @@ DROPBEAR         = dropbear-$(DROPBEAR_VER)
 DROPBEAR_ARCHIVE = $(DROPBEAR).tar.bz2
 CLEANFILES      += $(DROPBEAR) $(DROPBEAR_ARCHIVE)
 
+# variables for building gbridge
+GBRIDGE = gbridge-build
+
 # variables for building initramfs
 INITRAMFS          = initramfs
 CLEANFILES        += $(INITRAMFS)
@@ -63,8 +66,15 @@ $(DROPBEAR)/dropbear: $(DROPBEAR)
 	cd $< && ./configure --enable-static
 	$(MAKE) -C $<
 
+# rules to build gbridge
+$(GBRIDGE)/gbridge: $(KERNEL)
+	cd .. && autoreconf --force --install
+	mkdir -p $(dir $@)
+	cd $(dir $@) && GBDIR=../$(KERNEL)/drivers/staging/greybus LDFLAGS="-static" ../../configure
+	cd $(dir $@) && $(MAKE)
+
 # rules to build initramfs
-$(INITRAMFS): $(BUSYBOX)/busybox $(DROPBEAR)/dropbear busybox-rcS.sh Makefile
+$(INITRAMFS): $(BUSYBOX)/busybox $(DROPBEAR)/dropbear $(GBRIDGE)/gbridge busybox-rcS.sh Makefile
 	mkdir -p \
 		$@/bin \
 		$@/sbin \
@@ -89,6 +99,7 @@ $(INITRAMFS): $(BUSYBOX)/busybox $(DROPBEAR)/dropbear busybox-rcS.sh Makefile
 	cp $(DROPBEAR)/dropbear $@/bin
 	cp busybox-rcS.sh $@/etc/init.d/rcS
 	chmod +x $@/etc/init.d/rcS
+	cp $(GBRIDGE)/gbridge $@/bin/gbridge
 
 # rules to build the Linux kernel
 $(KERNEL_ARCHIVE):
@@ -96,6 +107,8 @@ $(KERNEL_ARCHIVE):
 
 $(KERNEL): $(KERNEL_ARCHIVE)
 	tar xpzf $<
+	cd $@ && patch -p1 < ../$(KERNEL)-greybus-netlink.patch
+	touch $@
 
 $(KERNEL)/arch/$(ARCH)/boot/bzImage: $(KERNEL) $(KERNEL_CONFIG) $(INITRAMFS)
 	cp $(KERNEL_CONFIG) $</.config
