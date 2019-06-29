@@ -1,4 +1,4 @@
-.PHONY: all clean check
+.PHONY: all clean check qemu
 
 # these are known working architectures for integration testing in the CI environment
 SUPPORTED_ARCHES = x86_64
@@ -10,14 +10,6 @@ $(error Architecture $(ARCH) is not yet supported / known working for integratio
 endif
 
 CLEANFILES :=
-
-# variables for building the Linux kernel
-KERNEL_VER     = 5.1
-KERNEL_URL     = https://github.com/torvalds/linux/archive/v$(KERNEL_VER).tar.gz
-KERNEL         = linux-$(KERNEL_VER)
-KERNEL_CONFIG  = $(KERNEL).config
-KERNEL_ARCHIVE = $(KERNEL).tar.gz
-CLEANFILES     += $(KERNEL) $(KERNEL_ARCHIVE)
 
 # variables for building BusyBox
 BUSYBOX_VER     = 1.30.1
@@ -35,22 +27,17 @@ CLEANFILES      += $(DROPBEAR) $(DROPBEAR_ARCHIVE)
 
 # variables for building initramfs
 INITRAMFS          = initramfs
-INITRAMFS_ARCHIVE  = initramfs.cpio.gz
-CLEANFILES        += $(INITRAMFS) $(INITRAMFS_ARCHIVE)
+CLEANFILES        += $(INITRAMFS)
 
-all: $(KERNEL)/arch/$(ARCH)/boot/bzImage $(INITRAMFS_ARCHIVE)
+# variables for building the Linux kernel
+KERNEL_VER     = 5.1
+KERNEL_URL     = https://github.com/torvalds/linux/archive/v$(KERNEL_VER).tar.gz
+KERNEL         = linux-$(KERNEL_VER)
+KERNEL_CONFIG  = $(KERNEL).config
+KERNEL_ARCHIVE = $(KERNEL).tar.gz
+CLEANFILES     += $(KERNEL) $(KERNEL_ARCHIVE)
 
-# rules to build the Linux kernel
-$(KERNEL_ARCHIVE):
-	curl -L "$(KERNEL_URL)" -o $@
-
-$(KERNEL): $(KERNEL_ARCHIVE)
-	tar xpzf $<
-
-$(KERNEL)/arch/$(ARCH)/boot/bzImage: $(KERNEL) $(KERNEL_CONFIG)
-	cp $(KERNEL_CONFIG) $</.config
-	$(MAKE) -C $< $(notdir $@)
-	touch $@
+all: $(KERNEL)/arch/$(ARCH)/boot/bzImage
 
 # rules to build busybox
 $(BUSYBOX_ARCHIVE):
@@ -76,34 +63,59 @@ $(DROPBEAR)/dropbear: $(DROPBEAR)
 	$(MAKE) -C $<
 
 # rules to build initramfs
-$(INITRAMFS): $(BUSYBOX)/busybox $(DROPBEAR)/dropbear
+$(INITRAMFS): $(BUSYBOX)/busybox $(DROPBEAR)/dropbear busybox-rcS.sh Makefile
 	mkdir -p \
 		$@/bin \
 		$@/sbin \
+		$@/dev \
 		$@/etc/init.d \
+		$@/etc/dropbear \
 		$@/proc \
+		$@/root \
 		$@/sys \
 		$@/usr/bin \
 		$@/usr/sbin \
-		$@/usr/share/udhcpc
+		$@/usr/share/udhcpc \
+		$@/var/run
+	echo 'root::0:0:root:/root:/bin/sh' > $@/etc/passwd
+	echo 'root::0:root' > $@/etc/group
+	cd $@/dev && if [ ! -e console ]; then sudo mknod -m 600 console c 5 1; fi
+	cd $@/dev && if [ ! -e null ]; then sudo mknod -m 666 null c 1 3; fi
 	cd $@/bin && ln -sf /bin/busybox sh
 	cd $@ && ln -sf /bin/busybox init
 	cp $(BUSYBOX)/busybox $@/bin
 	cp $(BUSYBOX)/examples/udhcp/simple.script $@/usr/share/udhcpc/default.script
+	cp $(DROPBEAR)/dropbear $@/bin
+	for l in `ldd $@/bin/dropbear | grep "=>" | awk '{print $$3}'`; do \
+		mkdir -p $@/`$(dirname $$l)`; \
+		cp $$l $@/$(dirname $$l); \
+	done
 	cp busybox-rcS.sh $@/etc/init.d/rcS
 	chmod +x $@/etc/init.d/rcS
-	cp $(DROPBEAR)/dropbear $@/bin
+
+# rules to build the Linux kernel
+$(KERNEL_ARCHIVE):
+	curl -L "$(KERNEL_URL)" -o $@
+
+$(KERNEL): $(KERNEL_ARCHIVE)
+	tar xpzf $<
+
+$(KERNEL)/arch/$(ARCH)/boot/bzImage: $(KERNEL) $(KERNEL_CONFIG) $(INITRAMFS)
+	cp $(KERNEL_CONFIG) $</.config
+	$(MAKE) -C $< $(notdir $@)
+	touch $@
 
 $(INITRAMFS_ARCHIVE): $(INITRAMFS)
 	cd $< && find . -print0 | cpio --create --format=newc | gzip -9 > ../$@
 
-qemu: $(INITRAMFS_ARCHIVE) $(KERNEL)/arch/$(ARCH)/boot/bzImage
+qemu: $(KERNEL)/arch/$(ARCH)/boot/bzImage
 	qemu-system-x86_64 \
 		-nographic \
 		-cpu host \
 		-enable-kvm \
+		-netdev user,id=eth0,hostfwd=tcp::2222-:22 \
+		-device e1000,netdev=eth0 \
 		-kernel $(KERNEL)/arch/$(ARCH)/boot/bzImage \
-		-initrd initramfs.cpio.gz \
 		-append "console=ttyS0 root=/dev/ram0"
 
 clean:

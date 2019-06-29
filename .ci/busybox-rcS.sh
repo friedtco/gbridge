@@ -172,30 +172,9 @@ parse_cmdline() {
 main() {
   echo "Initializing.."
   do_init
-  echo "Parsing /proc/cmdline.."
-  parse_cmdline
-  if [ "" != "${ROOT}" ]; then
-    do_mkdir /mnt
-    if [ "" = "${ROOTFSTYPE}" ]; then
-      # rely on auto-probing filesystem type
-      do_mount "${ROOT}" "/mnt"
-    else
-      do_mount "${ROOTFSTYPE}" "${ROOT}" "/mnt"
-    fi
-    true \
-    && exec switch_root -c ${CONSOLE} "/mnt" ${INIT} \
-    || die "failed to change root filesystems"
-  else
-    echo "Unable to find root filesystem"
-    echo "Dropping to busybox shell.."
-    if [ $$ -eq 1 ]; then
-      # we are the init process. execute the shell to avoid kernel panic
-      exec /bin/sh
-    else
-      # we're running from busybox init. exit so that init can respawn an "askfirst" shell
-      exit 0
-    fi
-  fi
+  ifconfig eth0 up 0.0.0.0
+  udhcpc -i eth0 &
+  dropbear -R -B -E
 }
 
 main
