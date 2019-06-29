@@ -3,7 +3,7 @@
 # these are known working architectures for integration testing in the CI environment
 SUPPORTED_ARCHES = x86_64
 
-ARCH = $(shell uname -a)
+ARCH = $(shell uname -m)
 
 ifeq ($(SUPPORTED_ARCHES),$(filter-out,$(ARCH),$(SUPPORTED_ARCHES)))
 $(error Architecture $(ARCH) is not yet supported / known working for integration testing)
@@ -24,7 +24,6 @@ BUSYBOX_VER     = 1.30.1
 BUSYBOX         = busybox-$(BUSYBOX_VER)
 BUSYBOX_ARCHIVE = $(BUSYBOX).tar.bz2
 BUSYBOX_URL     = https://busybox.net/downloads/$(BUSYBOX_ARCHIVE)
-BUSYBOX_CONFIG  = busybox-$(BUSYBOX_VER).config
 CLEANFILES      += $(BUSYBOX) $(BUSYBOX_ARCHIVE)
 
 # variables for building Dropbear
@@ -39,7 +38,7 @@ INITRAMFS          = initramfs
 INITRAMFS_ARCHIVE  = initramfs.cpio.gz
 CLEANFILES        += $(INITRAMFS) $(INITRAMFS_ARCHIVE)
 
-all: $(KERNEL)/arch/x86_64/boot/bzImage $(INITRAMFS_ARCHIVE)
+all: $(KERNEL)/arch/$(ARCH)/boot/bzImage $(INITRAMFS_ARCHIVE)
 
 # rules to build the Linux kernel
 $(KERNEL_ARCHIVE):
@@ -48,11 +47,10 @@ $(KERNEL_ARCHIVE):
 $(KERNEL): $(KERNEL_ARCHIVE)
 	tar xpzf $<
 
-$(KERNEL)/.config: $(KERNEL_CONFIG) $(KERNEL)
-	cp $< $@
-
-$(KERNEL)/arch/x86_64/boot/bzImage: $(KERNEL) $(KERNEL)/.config
+$(KERNEL)/arch/$(ARCH)/boot/bzImage: $(KERNEL) $(KERNEL_CONFIG)
+	cp $(KERNEL_CONFIG) $</.config
 	$(MAKE) -C $< $(notdir $@)
+	touch $@
 
 # rules to build busybox
 $(BUSYBOX_ARCHIVE):
@@ -61,10 +59,9 @@ $(BUSYBOX_ARCHIVE):
 $(BUSYBOX): $(BUSYBOX_ARCHIVE)
 	tar xpjf $<
 
-$(BUSYBOX)/.config: $(BUSYBOX_CONFIG) $(BUSYBOX)
-	cp $< $@
-
-$(BUSYBOX)/busybox: $(BUSYBOX) $(BUSYBOX)/.config
+$(BUSYBOX)/busybox: $(BUSYBOX)
+	$(MAKE) -C $< defconfig
+	echo 'CONFIG_STATIC=y' >> $(BUSYBOX)/.config
 	$(MAKE) -C $<
 
 # rules to build dropbear
@@ -100,13 +97,14 @@ $(INITRAMFS): $(BUSYBOX)/busybox $(DROPBEAR)/dropbear
 $(INITRAMFS_ARCHIVE): $(INITRAMFS)
 	cd $< && find . -print0 | cpio --create --format=newc | gzip -9 > ../$@
 
-qemu: $(INITRAMFS_ARCHIVE) $(KERNEL)/arch/x86_64/boot/bzImage
+qemu: $(INITRAMFS_ARCHIVE) $(KERNEL)/arch/$(ARCH)/boot/bzImage
 	qemu-system-x86_64 \
 		-nographic \
-		-cpu Nehalem \
-		-kernel $(KERNEL)/arch/x86_64/boot/bzImage \
+		-cpu host \
+		-enable-kvm \
+		-kernel $(KERNEL)/arch/$(ARCH)/boot/bzImage \
 		-initrd initramfs.cpio.gz \
-		-append "console=ttyS0 init=/init root=/dev/ram"
+		-append "console=ttyS0 root=/dev/ram0"
 
 clean:
 	rm -Rf $(CLEANFILES)
