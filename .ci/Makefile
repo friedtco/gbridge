@@ -39,7 +39,7 @@ INITRAMFS          = initramfs
 INITRAMFS_ARCHIVE  = initramfs.cpio.gz
 CLEANFILES        += $(INITRAMFS) $(INITRAMFS_ARCHIVE)
 
-all: $(KERNEL)/vmlinux $(INITRAMFS_ARCHIVE)
+all: $(KERNEL)/arch/x86_64/boot/bzImage $(INITRAMFS_ARCHIVE)
 
 # rules to build the Linux kernel
 $(KERNEL_ARCHIVE):
@@ -51,7 +51,7 @@ $(KERNEL): $(KERNEL_ARCHIVE)
 $(KERNEL)/.config: $(KERNEL_CONFIG) $(KERNEL)
 	cp $< $@
 
-$(KERNEL)/vmlinux: $(KERNEL) $(KERNEL)/.config
+$(KERNEL)/arch/x86_64/boot/bzImage: $(KERNEL) $(KERNEL)/.config
 	$(MAKE) -C $< $(notdir $@)
 
 # rules to build busybox
@@ -98,7 +98,15 @@ $(INITRAMFS): $(BUSYBOX)/busybox $(DROPBEAR)/dropbear
 	cp $(DROPBEAR)/dropbear $@/bin
 
 $(INITRAMFS_ARCHIVE): $(INITRAMFS)
-	cd $< && find . -print0 | cpio --null -ov --format=newc | gzip -9 > ../$@
+	cd $< && find . -print0 | cpio --create --format=newc | gzip -9 > ../$@
+
+qemu: $(INITRAMFS_ARCHIVE) $(KERNEL)/arch/x86_64/boot/bzImage
+	qemu-system-x86_64 \
+		-nographic \
+		-cpu Nehalem \
+		-kernel $(KERNEL)/arch/x86_64/boot/bzImage \
+		-initrd initramfs.cpio.gz \
+		-append "console=ttyS0 init=/init root=/dev/ram"
 
 clean:
 	rm -Rf $(CLEANFILES)
