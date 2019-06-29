@@ -59,6 +59,7 @@ $(DROPBEAR): $(DROPBEAR_ARCHIVE)
 	tar xpjf $<
 
 $(DROPBEAR)/dropbear: $(DROPBEAR)
+	cd $< && patch -p1 < ../dropbear-all-root-login.patch
 	cd $< && ./configure --enable-static
 	$(MAKE) -C $<
 
@@ -86,10 +87,6 @@ $(INITRAMFS): $(BUSYBOX)/busybox $(DROPBEAR)/dropbear busybox-rcS.sh Makefile
 	cp $(BUSYBOX)/busybox $@/bin
 	cp $(BUSYBOX)/examples/udhcp/simple.script $@/usr/share/udhcpc/default.script
 	cp $(DROPBEAR)/dropbear $@/bin
-	for l in `ldd $@/bin/dropbear | grep "=>" | awk '{print $$3}'`; do \
-		mkdir -p $@/`$(dirname $$l)`; \
-		cp $$l $@/$(dirname $$l); \
-	done
 	cp busybox-rcS.sh $@/etc/init.d/rcS
 	chmod +x $@/etc/init.d/rcS
 
