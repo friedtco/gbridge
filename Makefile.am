@@ -10,12 +10,14 @@ gbridge_SOURCES = main.c \
 		  controller.c \
 		  protocols/svc.c
 
+gbridge_SOURCES += controllers/tcpip.c
+
 if NETLINK
 gbridge_SOURCES += controllers/gb_netlink.c
 endif
 
-if TPCIP
-gbridge_SOURCES += controllers/tcpip.c
+if AVAHI
+gbridge_SOURCES += controllers/avahi.c
 endif
 
 if BLUETOOTH
