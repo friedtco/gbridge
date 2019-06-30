@@ -14,14 +14,32 @@ AC_PROG_INSTALL
 AC_CHECK_LIB([nl-3], [nl_socket_alloc])
 AC_CHECK_LIB([nl-genl-3], [genl_register_family])
 AC_CHECK_LIB([pthread], [pthread_create])
-AC_CHECK_LIB([avahi-common], [main])
-AC_CHECK_LIB([avahi-client], [main])
+
+# FIXME: @CJF: 20190629: isn't it cheating to just use 'main'??
+AC_CHECK_LIB([avahi-common], [main],
+	AC_CHECK_LIB([avahi-client], [main],
+		[avahi=true],
+		[avahi=false]
+	)
+	,
+	[avahi=false]
+)
 
 AC_CONFIG_SRCDIR([main.c])
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_FILES([
 	Makefile
 ])
+
+AC_ARG_ENABLE([avahi],
+[  --enable-avahi    Enable Avahi],
+[case "${enableval}" in
+	yes) avahi=$avahi ;
+	     AC_DEFINE([AVAHI], [1], ["Avahi support"]) ;;
+	no)  avahi=false ;;
+	*) AC_MSG_ERROR([bad value ${enableval} for --enable-avahi]) ;;
+esac])
+AM_CONDITIONAL([AVAHI], [test x$avahi = xtrue])
 
 AC_ARG_ENABLE([bluetooth],
 [  --enable-bluetooth    Enable bluetooth],
