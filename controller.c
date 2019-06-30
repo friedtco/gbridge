@@ -405,9 +405,10 @@ void register_controllers(void)
 #ifdef HAVE_LIBBLUETOOTH
 	register_controller(&bluetooth_controller);
 #endif
-#ifdef HAVE_TCPIP
-	register_controller(&tcpip_controller);
+#ifdef HAVE_AVAHI
+	register_controller(&avahi_controller);
 #endif
+	register_controller(&tcpip_controller);
 }
 
 static void *controller_loop(void *data)

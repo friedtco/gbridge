@@ -80,6 +80,7 @@ struct controller {
 };
 
 extern struct controller bluetooth_controller;
+extern struct controller avahi_controller;
 extern struct controller tcpip_controller;
 extern struct controller netlink_controller;
 

@@ -34,8 +34,7 @@ AC_CONFIG_FILES([
 AC_ARG_ENABLE([avahi],
 [  --enable-avahi    Enable Avahi],
 [case "${enableval}" in
-	yes) avahi=$avahi ;
-	     AC_DEFINE([AVAHI], [1], ["Avahi support"]) ;;
+	yes) AS_IF([test x$avahi = xtrue],AC_DEFINE([HAVE_AVAHI], [1], ["Avahi support"]));;
 	no)  avahi=false ;;
 	*) AC_MSG_ERROR([bad value ${enableval} for --enable-avahi]) ;;
 esac])
@@ -50,16 +49,6 @@ AC_ARG_ENABLE([bluetooth],
 	*) AC_MSG_ERROR([bad value ${enableval} for --enable-bluetooth]) ;;
 esac])
 AM_CONDITIONAL([BLUETOOTH], [test x$bluetooth = xtrue])
-
-AC_ARG_ENABLE([tcpip],
-[  --enable-tcpip    Enable TCP/IP],
-[case "${enableval}" in
-	yes) tcpip=true ;
-	     AC_DEFINE([HAVE_TCPIP], [1], ["TCP/IP support"]) ;;
-	no)  tcpip=false ;;
-	*) AC_MSG_ERROR([bad value ${enableval} for --enable-tcpip]) ;;
-esac])
-AM_CONDITIONAL([TPCIP], [test x$tcpip = xtrue])
 
 AC_ARG_ENABLE([uart],
 [  --enable-uart    Enable uart],

@@ -13,6 +13,8 @@ addons:
     - libtool
     - pkg-config
     - libbluetooth-dev
+    - libavahi-common-dev
+    - libavahi-client-dev
 script:
   - sudo sh -c "apt update && apt install -y linux-headers-`uname -r`"
   - cd .ci && make -j`nproc --all`
