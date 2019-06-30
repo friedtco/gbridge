@@ -56,7 +56,7 @@ static int avahi_connection_create(struct connection *conn)
 	int ret;
 	struct sockaddr_in serv_addr;
 	struct avahi_connection *tconn;
-	struct avahi_device *td = conn->intf->priv;
+	struct avahi_device *td = conn->intf1->priv;
 
 	tconn = malloc(sizeof(*tconn));
 	if (!tconn)
