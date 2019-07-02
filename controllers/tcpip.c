@@ -1,6 +1,7 @@
 /*
  * GBridge (Greybus Bridge)
  * Copyright (c) 2016 Alexandre Bailon
+ * Copyright (c) 2019 Christopher Friedt
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,103 +18,106 @@
  */
 
 #include <errno.h>
+#include <netdb.h>
+#include <signal.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/queue.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-
-#include <avahi-client/client.h>
-#include <avahi-client/lookup.h>
-
-#include <avahi-common/simple-watch.h>
-#include <avahi-common/malloc.h>
-#include <avahi-common/error.h>
 
 #include <debug.h>
 #include <gbridge.h>
 #include <controller.h>
+
+// this 'G' << 8 | 'B' works out to 18242
+#define GBRIDGE_TCPIP_PORT                \
+	(                                     \
+		0                                 \
+		| ((unsigned)('G' << 8) & 0xff00) \
+		| ((unsigned)('B' << 0) & 0x00ff) \
+	)
 
 struct tcpip_connection {
 	int sock;
 };
 
 struct tcpip_device {
+	int client_socket;
 	char *host_name;
-	char addr[AVAHI_ADDRESS_STR_MAX];
+	char addr[INET6_ADDRSTRLEN];
 	int port;
 };
 
 struct tcpip_controller {
-	AvahiClient *client;
-	AvahiSimplePoll *simple_poll;
+	struct sockaddr_in6 server_sockaddr;
+	int server_socket;
+	pthread_t server_thread;
+	// socket[1] is written to to cancel the server thread
+	int cancel_socket[2];
 };
 
 static int tcpip_connection_create(struct connection *conn)
 {
-	int ret;
-	struct sockaddr_in serv_addr;
-	struct tcpip_connection *tconn;
-	struct tcpip_device *td = conn->intf->priv;
-
-	tconn = malloc(sizeof(*tconn));
-	if (!tconn)
-		return -ENOMEM;
-
-	tconn->sock = socket(AF_INET, SOCK_STREAM, 0);
-	if (tconn->sock < 0) {
-		pr_err("Can't create socket\n");
-		return tconn->sock;
-	}
-	conn->priv = tconn;
-
-	memset(&serv_addr, 0, sizeof(serv_addr));
-	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_port = htons(td->port + conn->cport2_id);
-	serv_addr.sin_addr.s_addr = inet_addr(td->addr);
-
-	pr_info("Trying to connect to module at %s:%d\n", td->addr, td->port);
-	do {
-		ret = connect(tconn->sock,
-			      (struct sockaddr *)&serv_addr,
-			      sizeof(struct sockaddr));
-		if (ret)
-			sleep(1);
-	} while (ret);
-	pr_info("Connected to module\n");
-
+	struct tcpip_device *td = conn->intf1->priv;
+	pr_info("Connected to module at %s:%d\n", td->addr, td->port);
 	return 0;
 }
 
 static int tcpip_connection_destroy(struct connection *conn)
 {
-	struct tcpip_connection *tconn = conn->priv;
+	struct tcpip_device *td = conn->intf1->priv;
 
-	conn->priv = NULL;
-	close(tconn->sock);
-	free(tconn);
+	if (NULL == conn || NULL == conn->intf1 || NULL == conn->intf1->priv ) {
+		return 0;
+	}
+
+	if (NULL != td->host_name) {
+		free( td->host_name );
+		td->host_name = NULL;
+	}
+
+	if (-1 != td->client_socket) {
+		close(td->client_socket);
+		td->client_socket = -1;
+	}
+	free(td);
+	conn->intf1->priv = NULL;
 
 	return 0;
 }
 
-static void tcpip_hotplug(struct controller *ctrl, const char *host_name,
-			  const AvahiAddress *address, uint16_t port)
+static void tcpip_hotplug(struct controller *ctrl, const int client_socket, const char *host_name,
+			  const struct sockaddr *sa, const socklen_t salen )
 {
 	struct interface *intf;
 	struct tcpip_device *td;
 
 	td = malloc(sizeof(*td));
 	if (!td)
-		goto exit;
+		goto err_exit;
 
-	td->port = port;
-	avahi_address_snprint(td->addr, sizeof(td->addr), address);
-	td->host_name = malloc(strlen(host_name) + 1);
-	if (!td->host_name)
-		goto err_free_td;
-	strcpy(td->host_name, host_name);
+	td->client_socket = client_socket;
+	td->host_name = (char *)host_name;
+	inet_ntop(sa->sa_family, sa, td->addr, sizeof(td->addr));
+
+	switch (sa->sa_family) {
+	case AF_INET:
+		td->port = ntohs(((struct sockaddr_in *)sa)->sin_port);
+		break;
+	case AF_INET6:
+		td->port = ntohs(((struct sockaddr_in6 *)sa)->sin6_port);
+		break;
+	default:
+		pr_err("unrecognized address family %d\n", sa->sa_family);
+		goto err_free_host_name;
+	}
 
 	/* FIXME: use real IDs */
 	intf = interface_create(ctrl, 1, 1, 0x1234, td);
@@ -128,160 +132,133 @@ static void tcpip_hotplug(struct controller *ctrl, const char *host_name,
 err_intf_destroy:
 	interface_destroy(intf);
 err_free_host_name:
+	close(client_socket);
 	free(td->host_name);
-err_free_td:
 	free(td);
-exit:
-	pr_err("Failed to hotplug of TCP/IP module\n");
-}
-
-static void resolve_callback(AvahiServiceResolver *r,
-			     AvahiIfIndex interface,
-			     AvahiProtocol protocol,
-			     AvahiResolverEvent event,
-			     const char *name,
-			     const char *type,
-			     const char *domain,
-			     const char *host_name,
-			     const AvahiAddress *address,
-			     uint16_t port,
-			     AvahiStringList *txt,
-			     AvahiLookupResultFlags flags,
-			     void* userdata)
-{
-	AvahiClient *c;
-	struct controller *ctrl = userdata;
-
-	switch (event) {
-	case AVAHI_RESOLVER_FAILURE:
-		c = avahi_service_resolver_get_client(r);
-		pr_err("(Resolver) Failed to resolve service"
-			" '%s' of type '%s' in domain '%s': %s\n",
-			name, type, domain,
-			avahi_strerror(avahi_client_errno(c)));
-		break;
-
-	case AVAHI_RESOLVER_FOUND:
-		tcpip_hotplug(ctrl, host_name, address, port);
-		break;
-	}
-
-	avahi_service_resolver_free(r);
-}
-
-static void browse_callback(AvahiServiceBrowser *b,
-			    AvahiIfIndex interface,
-			    AvahiProtocol protocol,
-			    AvahiBrowserEvent event,
-			    const char *name,
-			    const char *type,
-			    const char *domain,
-			    AvahiLookupResultFlags flags,
-			    void* userdata)
-{
-	struct controller *ctrl = userdata;
-	struct tcpip_controller *tcpip_ctrl = ctrl->priv;
-	AvahiClient *c = tcpip_ctrl->client;
-	AvahiServiceResolver *r;
-
-	switch (event) {
-	case AVAHI_BROWSER_FAILURE:
-		c = avahi_service_browser_get_client(b);
-		pr_err("(Browser) %s\n", 
-			avahi_strerror(avahi_client_errno(c)));
-		avahi_simple_poll_quit(tcpip_ctrl->simple_poll);
-		return;
-
-	case AVAHI_BROWSER_NEW:
-		r = avahi_service_resolver_new(c, interface, protocol,
-					       name, type, domain,
-					       AVAHI_PROTO_UNSPEC, 0,
-					       resolve_callback, userdata);
-		if (!r) {
-			pr_err("Failed to resolve service '%s': %s\n",
-				name, avahi_strerror(avahi_client_errno(c)));
-		}
-
-		return;
-
-	case AVAHI_BROWSER_REMOVE:
-		/* TODO */
-		return;
-
-	default:
-		return;
-	}
-}
-
-static void client_callback(AvahiClient *c,
-			    AvahiClientState state, void *userdata)
-{
-	struct controller *ctrl = userdata;
-	struct tcpip_controller *tcpip_ctrl = ctrl->priv;
-
-	if (state == AVAHI_CLIENT_FAILURE) {
-		pr_err("Server connection failure: %s\n",
-			avahi_strerror(avahi_client_errno(c)));
-		avahi_simple_poll_quit(tcpip_ctrl->simple_poll);
-	}
+err_exit:
+	pr_err("Failed to hotplug TCP/IP module\n");
 }
 
 static void tcpip_intf_destroy(struct interface *intf)
 {
 }
 
-static int avahi_discovery(struct controller *ctrl)
-{
-	AvahiClient *client;
-	AvahiServiceBrowser *sb;
-	AvahiSimplePoll *simple_poll;
+static void *tcpip_server_thread( void *arg ) {
+
+	int r;
+
+	struct controller *ctrl = arg;
 	struct tcpip_controller *tcpip_ctrl = ctrl->priv;
-	int ret = 0;
-	int error;
 
-	simple_poll = avahi_simple_poll_new();
-	if (!simple_poll) {
-		pr_err("Failed to create simple poll object\n");
-		return -ENOMEM;
+	int client_socket;
+	struct sockaddr_in6 client_sockaddr6;
+	struct sockaddr *sa;
+	socklen_t salen;
+
+	fd_set rfds;
+
+	for( ;; ) {
+
+		FD_ZERO(&rfds);
+		FD_SET(tcpip_ctrl->server_socket, &rfds);
+		FD_SET(tcpip_ctrl->cancel_socket[0], &rfds);
+		int maxfd = (tcpip_ctrl->server_socket >= tcpip_ctrl->cancel_socket[0])
+			? tcpip_ctrl->server_socket : tcpip_ctrl->cancel_socket[0];
+
+		r = select(maxfd+1, &rfds, NULL, NULL, NULL);
+		if (-1 == r) {
+			r = errno;
+			pr_err("Failed in call to select\n");
+			continue;
+		}
+		if (0 == r) {
+			pr_err("select timed-out (even though no timeout was specified\n");
+			continue;
+		}
+		if (FD_ISSET(tcpip_ctrl->cancel_socket[0], &rfds)) {
+			pr_info("received notification to cancel discovery\n");
+			break;
+		}
+
+		// to accept on both ipv4 and ipv6 at the same time
+		r = accept(tcpip_ctrl->server_socket, NULL, NULL);
+		if (-1 == r) {
+			r = errno;
+			pr_err("Failed in call to accept\n");
+			continue;
+		}
+		client_socket = r;
+
+		sa = (struct sockaddr *)&client_sockaddr6;
+		salen = sizeof(client_sockaddr6);
+
+		r = getpeername(client_socket, sa, &salen);
+		if (-1 == r) {
+			pr_err("Failed in call to getpeername\n");
+			close(client_socket);
+			continue;
+		}
+
+		switch (sa->sa_family) {
+		case AF_INET:
+		case AF_INET6:
+			break;
+		default:
+			pr_err("unrecognized address family %d\n", sa->sa_family);
+			continue;
+		}
+
+		char *hostname = calloc(1, NI_MAXHOST);
+		if (NULL == hostname) {
+			pr_err("failed to allocate memory for hostname");
+			close(client_socket);
+			continue;
+		}
+		r = getnameinfo( sa, salen, hostname, NI_MAXHOST, NULL, 0, 0 );
+		hostname = realloc(hostname, strlen(hostname) + 1);
+
+		tcpip_hotplug(ctrl, client_socket, hostname, sa, salen);
 	}
 
-	client = avahi_client_new(avahi_simple_poll_get(simple_poll),
-				  0, client_callback, ctrl, &error);
-	if (!client) {
-		ret = error;
-		pr_err("Failed to create client: %s\n", avahi_strerror(error));
-		goto err_simple_pool_free;
-	}
-
-	tcpip_ctrl->client = client;
-	sb = avahi_service_browser_new(client,
-				       AVAHI_IF_UNSPEC, AVAHI_PROTO_INET,
-				       "_greybus._tcp", NULL, 0,
-				       browse_callback, ctrl); 
-	if (!sb) {
-		ret = avahi_client_errno(client);
-		pr_err("Failed to create service browser: %s\n",
-			avahi_strerror(avahi_client_errno(client)));
-		goto err_client_free;
-	}
-
-	tcpip_ctrl->simple_poll = simple_poll;
-	avahi_simple_poll_loop(simple_poll);
-
-	avahi_service_browser_free(sb);
-err_client_free:
-	avahi_client_free(client);
-err_simple_pool_free:
-	avahi_simple_poll_free(simple_poll);
-
-	return ret;
+	return NULL;
 }
 
-static void avahi_discovery_stop(struct controller *ctrl)
+static int tcpip_discovery(struct controller *ctrl)
 {
-	struct tcpip_controller *tcpip_ctrl = ctrl->priv;
+	struct tcpip_controller *tcpip_ctrl;
 
-	avahi_simple_poll_quit(tcpip_ctrl->simple_poll);
+	if (NULL == ctrl || NULL == ctrl->priv) {
+		return -EINVAL;
+	}
+
+	int r;
+
+	tcpip_ctrl = ctrl->priv;
+
+	r = pthread_kill(tcpip_ctrl->server_thread,0);
+	if ( 0 == r ) {
+		return -EALREADY;
+	}
+
+	r = pthread_create(&tcpip_ctrl->server_thread, NULL, tcpip_server_thread, ctrl);
+
+	return r;
+}
+
+static void tcpip_discovery_stop(struct controller *ctrl)
+{
+	if (NULL == ctrl || NULL == ctrl->priv) {
+		return;
+	}
+	struct tcpip_controller *tcpip_ctrl = ctrl->priv;
+	int r;
+	r = write(tcpip_ctrl->cancel_socket[1], "Q", 1);
+	if (1 != r) {
+		pr_err("Failed in call to write\n");
+		return;
+	}
+	void *retval;
+	pthread_join(tcpip_ctrl->server_thread, &retval);
 }
 
 static int tcpip_write(struct connection *conn, void *data, size_t len)
@@ -300,19 +277,99 @@ static int tcpip_read(struct connection *conn, void *data, size_t len)
 
 static int tcpip_init(struct controller *ctrl)
 {
+	int r;
 	struct tcpip_controller *tcpip_ctrl;
 
-	tcpip_ctrl = malloc(sizeof(*tcpip_ctrl));
-	if (!tcpip_ctrl)
-		return -ENOMEM;
-	 ctrl->priv = tcpip_ctrl;
+	tcpip_ctrl = calloc(1,sizeof(*tcpip_ctrl));
+	if (!tcpip_ctrl) {
+		r = -ENOMEM;
+		goto out;
+	}
+	ctrl->priv = tcpip_ctrl;
 
-	return 0;
+	r = socket(AF_INET6, SOCK_STREAM, 0);
+	if (-1 == r) {
+		r = -errno;
+		pr_err("Failed to create socket\n");
+		goto free_tcpip_ctrl;
+	}
+	tcpip_ctrl->server_socket = r;
+
+	bool on = true;
+	r = setsockopt(tcpip_ctrl->server_socket, SOL_SOCKET, SO_REUSEADDR, & on, sizeof(on));
+	if (-1 == r) {
+		r = -errno;
+		pr_err("Failed in call to setsockopt\n");
+		goto close_socket;
+	}
+
+	memset(&tcpip_ctrl->server_sockaddr, 0, sizeof(tcpip_ctrl->server_sockaddr));
+	tcpip_ctrl->server_sockaddr.sin6_family = AF_INET6;
+	tcpip_ctrl->server_sockaddr.sin6_addr   = in6addr_any;
+	tcpip_ctrl->server_sockaddr.sin6_port   = htons(GBRIDGE_TCPIP_PORT);
+
+	r = bind(tcpip_ctrl->server_socket, (struct sockaddr *)&tcpip_ctrl->server_sockaddr, sizeof(tcpip_ctrl->server_sockaddr));
+	if (-1 == r) {
+		r = -errno;
+		pr_err("Failed in call to bind\n");
+		goto close_socket;
+	}
+
+	r = listen(tcpip_ctrl->server_socket, 10);
+	if (-1 == r) {
+		r = -errno;
+		pr_err("Failed in call to listen\n");
+		goto close_socket;
+	}
+
+	r = socketpair(AF_UNIX, SOCK_STREAM, 0, tcpip_ctrl->cancel_socket);
+	if (-1 == r) {
+		r = -errno;
+		pr_err("Failed in call to socketpair\n");
+		goto close_socket;
+	}
+
+	// success!
+	r = 0;
+	goto out;
+
+close_socket:
+	close(tcpip_ctrl->server_socket);
+
+free_tcpip_ctrl:
+	free(tcpip_ctrl);
+	ctrl->priv = NULL;
+
+out:
+	return r;
 }
 
 static void tcpip_exit(struct controller *ctrl)
 {
+	if (NULL == ctrl || NULL == ctrl->priv) {
+		return;
+	}
+
+	struct tcpip_controller *tcpip_ctrl = ctrl->priv;
+
+	if ( -1 != tcpip_ctrl->server_socket ) {
+		close(tcpip_ctrl->server_socket);
+		tcpip_ctrl->server_socket = -1;
+	}
+
+	if ( -1 != tcpip_ctrl->cancel_socket[0] ) {
+		close(tcpip_ctrl->cancel_socket[0]);
+		tcpip_ctrl->cancel_socket[0] = -1;
+	}
+
+	if ( -1 != tcpip_ctrl->cancel_socket[1] ) {
+		close(tcpip_ctrl->cancel_socket[1]);
+		tcpip_ctrl->cancel_socket[1] = -1;
+	}
+
 	free(ctrl->priv);
+	ctrl->priv = NULL;
+	tcpip_ctrl = NULL;
 }
 
 
@@ -322,8 +379,8 @@ struct controller tcpip_controller = {
 	.exit = tcpip_exit,
 	.connection_create = tcpip_connection_create,
 	.connection_destroy = tcpip_connection_destroy,
-	.event_loop = avahi_discovery,
-	.event_loop_stop = avahi_discovery_stop,
+	.event_loop = tcpip_discovery,
+	.event_loop_stop = tcpip_discovery_stop,
 	.write = tcpip_write,
 	.read = tcpip_read,
 	.interface_destroy = tcpip_intf_destroy,

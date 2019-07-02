@@ -14,14 +14,24 @@ AC_PROG_INSTALL
 AC_CHECK_LIB([nl-3], [nl_socket_alloc])
 AC_CHECK_LIB([nl-genl-3], [genl_register_family])
 AC_CHECK_LIB([pthread], [pthread_create])
-AC_CHECK_LIB([avahi-common], [main])
-AC_CHECK_LIB([avahi-client], [main])
 
 AC_CONFIG_SRCDIR([main.c])
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_FILES([
 	Makefile
 ])
+
+AC_ARG_ENABLE([avahi],
+[  --enable-avahi    Enable Avahi],
+[case "${enableval}" in
+	yes) avahi=true ;
+	     AC_CHECK_LIB([avahi-client], [avahi_client_new])
+	     AC_CHECK_LIB([avahi-common], [avahi_simple_poll_get])
+	     AC_DEFINE([HAVE_AVAHI], [1], ["Avahi support"]) ;;
+	no)  avahi=false ;;
+	*) AC_MSG_ERROR([bad value ${enableval} for --enable-avahi]) ;;
+esac])
+AM_CONDITIONAL([AVAHI], [test x$avahi = xtrue])
 
 AC_ARG_ENABLE([bluetooth],
 [  --enable-bluetooth    Enable bluetooth],
@@ -32,16 +42,6 @@ AC_ARG_ENABLE([bluetooth],
 	*) AC_MSG_ERROR([bad value ${enableval} for --enable-bluetooth]) ;;
 esac])
 AM_CONDITIONAL([BLUETOOTH], [test x$bluetooth = xtrue])
-
-AC_ARG_ENABLE([tcpip],
-[  --enable-tcpip    Enable TCP/IP],
-[case "${enableval}" in
-	yes) tcpip=true ;
-	     AC_DEFINE([HAVE_TCPIP], [1], ["TCP/IP support"]) ;;
-	no)  tcpip=false ;;
-	*) AC_MSG_ERROR([bad value ${enableval} for --enable-tcpip]) ;;
-esac])
-AM_CONDITIONAL([TPCIP], [test x$tcpip = xtrue])
 
 AC_ARG_ENABLE([uart],
 [  --enable-uart    Enable uart],
