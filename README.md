@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.com/friedtco/gbridge.svg?token=tYzdCS7A2DzjyBybyBVm&branch=feature/1/gbridge-automated-build)](https://travis-ci.com/friedtco/gbridge)
+
 GBridge (Greybus Bridge)
 
 Greybus is a protocol layer for UniPro bus.
