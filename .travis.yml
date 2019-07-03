@@ -16,13 +16,7 @@ addons:
     - libavahi-common-dev
     - libavahi-client-dev
 script:
-- sudo sh -c "apt update && apt install -y linux-headers-`uname -r`"
-- git clone -b feature/1/greybus-automated-builds https://${GBTOKEN}@github.com/friedtco/greybus.git
-- autoreconf --force --install
-- GBDIR=`pwd`/greybus ./configure
-- make -j`nproc --all`
+  - sudo sh -c "apt update && apt install -y linux-headers-`uname -r`"
+  - cd .ci && make -j`nproc --all`
 notifications:
   email: false
-env:
-  global:
-    secure: UzvSElt5LQN5/fi2h1dP8Hu7hY8gNY7kEzPotM9aBD1AbGABllzHVPv0wJc7NktfS1tcwIc4WUM4t/MRX1tPuvJnoX69EXVExir0BxaTTJLjetujTR5zBTryVZHz+hCz4Ybb7n+ny/uApA369+9MDtrMs39JznlGKINCQENVHbmn8cIXBdVU+7yu/dhyp8f8auofNFPF75P+wkLLdQ3u/3SnwHxthOofbQpRkeAwWeFmDnsH/EpHSWyDzMPNrd+aZ/TVVvUvQXxkOvvhM1Y/bVJc3dcr96mr/Aca6UYXgXKfWWk4jfziSPkO9lfYrKDSRDAKVPD0fgNtmaWzW7rtDOZYGsdeudYnaEFBKRNHv0c+IBhKKM8dFVTcg0RlHlEBrLLdUB7gA86C+dLhLRCdFbR71z9IVQAyItbkxAz0usv5xLmU3+rYCWgavBG92VKjHj98BPvZZHWJFw4lEhFuQ2rlLF1h3uB6f4GAHPm1FUp4idu9Z/hiyjLCTT9FVXheLhG6/wqagLrjH4rpE0KhyLX1W273f/HoldFczx83pB5kwZL+4ji/5yxDUPFBrNn1Ir+Q1KOJa5ElIgbULEA7Z1MSWBUEOFfhl4QveJRjutHye6XufybnH4mwc1XKDY5MSnLQMejayW9L8/UIA7xLcci8b1yOanUdwuqxwMDq4i4=

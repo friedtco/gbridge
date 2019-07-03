@@ -1,0 +1,105 @@
+diff --git a/loginrec.c b/loginrec.c
+index af10d95..4f44511 100644
+--- a/loginrec.c
++++ b/loginrec.c
+@@ -275,7 +275,20 @@ login_init_entry(struct logininfo *li, int pid, const char *username,
+ 
+ 	if (username) {
+ 		strlcpy(li->username, username, sizeof(li->username));
++#if 0
+ 		pw = getpwnam(li->username);
++#else
++		static const struct passwd root = {
++			.pw_name = "root",
++			.pw_passwd = "",
++			.pw_uid = 0,
++			.pw_gid = 0,
++			.pw_gecos = "root",
++			.pw_dir = "/root",
++			.pw_shell = "/bin/sh",
++		};
++		pw = & root;
++#endif
+ 		if (pw == NULL)
+ 			dropbear_exit("login_init_entry: Cannot find user \"%s\"",
+ 					li->username);
+diff --git a/svr-auth.c b/svr-auth.c
+index 7575f90..9f0cecd 100644
+--- a/svr-auth.c
++++ b/svr-auth.c
+@@ -265,6 +265,7 @@ static int checkusername(const char *username, unsigned int userlen) {
+ 	}
+ 
+ 	/* check that user exists */
++#if 0
+ 	if (!ses.authstate.pw_name) {
+ 		TRACE(("leave checkusername: user '%s' doesn't exist", username))
+ 		dropbear_log(LOG_WARNING,
+@@ -276,6 +277,25 @@ static int checkusername(const char *username, unsigned int userlen) {
+ 
+ 	/* check if we are running as non-root, and login user is different from the server */
+ 	uid = geteuid();
++#else
++	static const struct passwd root = {
++		.pw_name = "root",
++		.pw_passwd = "",
++		.pw_uid = 0,
++		.pw_gid = 0,
++		.pw_gecos = "root",
++		.pw_dir = "/root",
++		.pw_shell = "/bin/sh",
++	};
++
++	ses.authstate.pw_uid = root.pw_uid;
++	ses.authstate.pw_gid = root.pw_gid;
++	ses.authstate.pw_dir = root.pw_dir;
++	ses.authstate.pw_shell = root.pw_shell;
++	ses.authstate.pw_name = root.pw_gecos;
++	ses.authstate.pw_passwd = root.pw_passwd;
++	uid = 0;
++#endif
+ 	if (!(DROPBEAR_SVR_MULTIUSER && uid == 0) && uid != ses.authstate.pw_uid) {
+ 		TRACE(("running as nonroot, only server uid is allowed"))
+ 		dropbear_log(LOG_WARNING,
+diff --git a/svr-chansession.c b/svr-chansession.c
+index 5a5a8c8..647f737 100644
+--- a/svr-chansession.c
++++ b/svr-chansession.c
+@@ -610,7 +610,20 @@ static int sessionpty(struct ChanSess * chansess) {
+ 		dropbear_exit("Out of memory"); /* TODO disconnect */
+ 	}
+ 
++#if 0
+ 	pw = getpwnam(ses.authstate.pw_name);
++#else
++	static const struct passwd root = {
++		.pw_name = "root",
++		.pw_passwd = "",
++		.pw_uid = 0,
++		.pw_gid = 0,
++		.pw_gecos = "root",
++		.pw_dir = "/root",
++		.pw_shell = "/bin/sh",
++	};
++	pw = & root;
++#endif
+ 	if (!pw)
+ 		dropbear_exit("getpwnam failed after succeeding previously");
+ 	pty_setowner(pw, chansess->tty);
+@@ -952,7 +965,7 @@ static void execchild(const void *user_data) {
+ #if DROPBEAR_SVR_MULTIUSER
+ 	/* We can only change uid/gid as root ... */
+ 	if (getuid() == 0) {
+-
++#if 0
+ 		if ((setgid(ses.authstate.pw_gid) < 0) ||
+ 			(initgroups(ses.authstate.pw_name, 
+ 						ses.authstate.pw_gid) < 0)) {
+@@ -961,6 +974,7 @@ static void execchild(const void *user_data) {
+ 		if (setuid(ses.authstate.pw_uid) < 0) {
+ 			dropbear_exit("Error changing user");
+ 		}
++#endif
+ 	} else {
+ 		/* ... but if the daemon is the same uid as the requested uid, we don't
+ 		 * need to */
