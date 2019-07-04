@@ -66,6 +66,9 @@ $(DROPBEAR)/dropbear: $(DROPBEAR)
 	cd $< && ./configure --enable-static
 	$(MAKE) -C $<
 
+$(DROPBEAR)/scp: $(DROPBEAR)/dropbear
+	$(MAKE) -C $(dir $<) $(notdir $@)
+
 # rules to build gbridge
 $(GBRIDGE)/gbridge: $(KERNEL)
 	cd .. && autoreconf --force --install
@@ -74,7 +77,7 @@ $(GBRIDGE)/gbridge: $(KERNEL)
 	cd $(dir $@) && $(MAKE)
 
 # rules to build initramfs
-$(INITRAMFS): $(BUSYBOX)/busybox $(DROPBEAR)/dropbear $(GBRIDGE)/gbridge busybox-rcS.sh Makefile
+$(INITRAMFS): $(BUSYBOX)/busybox $(DROPBEAR)/dropbear $(DROPBEAR)/scp $(GBRIDGE)/gbridge busybox-rcS.sh Makefile
 	mkdir -p \
 		$@/bin \
 		$@/sbin \
@@ -97,6 +100,7 @@ $(INITRAMFS): $(BUSYBOX)/busybox $(DROPBEAR)/dropbear $(GBRIDGE)/gbridge busybox
 	cp $(BUSYBOX)/busybox $@/bin
 	cp $(BUSYBOX)/examples/udhcp/simple.script $@/usr/share/udhcpc/default.script
 	cp $(DROPBEAR)/dropbear $@/bin
+	cp $(DROPBEAR)/scp $@/bin
 	cp busybox-rcS.sh $@/etc/init.d/rcS
 	chmod +x $@/etc/init.d/rcS
 	cp $(GBRIDGE)/gbridge $@/bin/gbridge
@@ -123,7 +127,7 @@ qemu: $(KERNEL)/arch/$(ARCH)/boot/bzImage
 		-nographic \
 		-cpu host \
 		-enable-kvm \
-		-netdev user,id=eth0,hostfwd=tcp::2222-:22 \
+		-netdev user,id=eth0,hostfwd=tcp::2222-:22,hostfwd=tcp::12345-:2345 \
 		-device e1000,netdev=eth0 \
 		-kernel $(KERNEL)/arch/$(ARCH)/boot/bzImage \
 		-append "console=ttyS0 root=/dev/ram0"
