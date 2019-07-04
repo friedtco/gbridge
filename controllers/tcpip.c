@@ -58,7 +58,6 @@ struct tcpip_device {
 struct tcpip_controller {
 	struct sockaddr_in6 server_sockaddr;
 	int server_socket;
-	pthread_t server_thread;
 	// socket[1] is written to to cancel the server thread
 	int cancel_socket[2];
 };
@@ -143,12 +142,17 @@ static void tcpip_intf_destroy(struct interface *intf)
 {
 }
 
-static void *tcpip_server_thread( void *arg ) {
+static int tcpip_discovery(struct controller *ctrl)
+{
+	struct tcpip_controller *tcpip_ctrl;
+
+	if (NULL == ctrl || NULL == ctrl->priv) {
+		return -EINVAL;
+	}
 
 	int r;
 
-	struct controller *ctrl = arg;
-	struct tcpip_controller *tcpip_ctrl = ctrl->priv;
+	tcpip_ctrl = ctrl->priv;
 
 	int client_socket;
 	struct sockaddr_in6 client_sockaddr6;
@@ -169,13 +173,15 @@ static void *tcpip_server_thread( void *arg ) {
 		if (-1 == r) {
 			r = errno;
 			pr_err("Failed in call to select\n");
-			continue;
+			break;
 		}
 		if (0 == r) {
+			r = errno;
 			pr_err("select timed-out (even though no timeout was specified\n");
-			continue;
+			break;
 		}
 		if (FD_ISSET(tcpip_ctrl->cancel_socket[0], &rfds)) {
+			r = 0;
 			pr_info("received notification to cancel discovery\n");
 			break;
 		}
@@ -185,7 +191,7 @@ static void *tcpip_server_thread( void *arg ) {
 		if (-1 == r) {
 			r = errno;
 			pr_err("Failed in call to accept\n");
-			continue;
+			return r;
 		}
 		client_socket = r;
 
@@ -196,51 +202,27 @@ static void *tcpip_server_thread( void *arg ) {
 		if (-1 == r) {
 			pr_err("Failed in call to getpeername\n");
 			close(client_socket);
-			continue;
+			break;
 		}
 
-		switch (sa->sa_family) {
-		case AF_INET:
-		case AF_INET6:
-			break;
-		default:
+		if ( !( AF_INET == sa->sa_family || AF_INET6 == sa->sa_family ) ) {
+			r = EINVAL;
 			pr_err("unrecognized address family %d\n", sa->sa_family);
-			continue;
+			break;
 		}
 
 		char *hostname = calloc(1, NI_MAXHOST);
 		if (NULL == hostname) {
+			r = ENOMEM;
 			pr_err("failed to allocate memory for hostname");
 			close(client_socket);
-			continue;
+			break;
 		}
 		r = getnameinfo( sa, salen, hostname, NI_MAXHOST, NULL, 0, 0 );
 		hostname = realloc(hostname, strlen(hostname) + 1);
 
 		tcpip_hotplug(ctrl, client_socket, hostname, sa, salen);
 	}
-
-	return NULL;
-}
-
-static int tcpip_discovery(struct controller *ctrl)
-{
-	struct tcpip_controller *tcpip_ctrl;
-
-	if (NULL == ctrl || NULL == ctrl->priv) {
-		return -EINVAL;
-	}
-
-	int r;
-
-	tcpip_ctrl = ctrl->priv;
-
-	r = pthread_kill(tcpip_ctrl->server_thread,0);
-	if ( 0 == r ) {
-		return -EALREADY;
-	}
-
-	r = pthread_create(&tcpip_ctrl->server_thread, NULL, tcpip_server_thread, ctrl);
 
 	return r;
 }
@@ -257,8 +239,7 @@ static void tcpip_discovery_stop(struct controller *ctrl)
 		pr_err("Failed in call to write\n");
 		return;
 	}
-	void *retval;
-	pthread_join(tcpip_ctrl->server_thread, &retval);
+	for( ; ctrl->event_loop_run; );
 }
 
 static int tcpip_write(struct connection *conn, void *data, size_t len)
@@ -295,7 +276,7 @@ static int tcpip_init(struct controller *ctrl)
 	}
 	tcpip_ctrl->server_socket = r;
 
-	bool on = true;
+	int on = 1;
 	r = setsockopt(tcpip_ctrl->server_socket, SOL_SOCKET, SO_REUSEADDR, & on, sizeof(on));
 	if (-1 == r) {
 		r = -errno;

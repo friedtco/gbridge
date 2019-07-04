@@ -175,6 +175,7 @@ main() {
   ifconfig eth0 up 0.0.0.0
   udhcpc -i eth0 &
   dropbear -R -B -E
+  gbridge &
 }
 
 main
