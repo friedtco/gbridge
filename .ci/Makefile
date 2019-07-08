@@ -1,4 +1,10 @@
-.PHONY: all clean check qemu
+.PHONY: all clean distclean qemu check
+
+CXX = g++
+CXXFLAGS :=
+CXXFLAGS += -fPIC
+CXXFLAGS += -std=c++14
+CXXFLAGS += -O0 -g
 
 # these are known working architectures for integration testing in the CI environment
 SUPPORTED_ARCHES = x86_64
@@ -12,35 +18,41 @@ endif
 CLEANFILES :=
 
 # variables for building BusyBox
-BUSYBOX_VER     = 1.30.1
-BUSYBOX         = busybox-$(BUSYBOX_VER)
-BUSYBOX_ARCHIVE = $(BUSYBOX).tar.bz2
-BUSYBOX_URL     = https://busybox.net/downloads/$(BUSYBOX_ARCHIVE)
-CLEANFILES      += $(BUSYBOX) $(BUSYBOX_ARCHIVE)
+BUSYBOX_VER      = 1.30.1
+BUSYBOX          = busybox-$(BUSYBOX_VER)
+BUSYBOX_ARCHIVE  = $(BUSYBOX).tar.bz2
+BUSYBOX_URL      = https://busybox.net/downloads/$(BUSYBOX_ARCHIVE)
+DISTCLEANFILES  += $(BUSYBOX) $(BUSYBOX_ARCHIVE)
 
 # variables for building Dropbear
 DROPBEAR_VER     = 2019.78
 DROPBEAR_URL     = https://matt.ucc.asn.au/dropbear/releases/dropbear-$(DROPBEAR_VER).tar.bz2
 DROPBEAR         = dropbear-$(DROPBEAR_VER)
 DROPBEAR_ARCHIVE = $(DROPBEAR).tar.bz2
-CLEANFILES      += $(DROPBEAR) $(DROPBEAR_ARCHIVE)
+DISTCLEANFILES  += $(DROPBEAR) $(DROPBEAR_ARCHIVE)
 
 # variables for building gbridge
 GBRIDGE = gbridge-build
 
 # variables for building initramfs
-INITRAMFS          = initramfs
-CLEANFILES        += $(INITRAMFS)
+INITRAMFS        = initramfs
+DISTCLEANFILES  += $(INITRAMFS)
 
 # variables for building the Linux kernel
-KERNEL_VER     = 5.1
-KERNEL_URL     = https://github.com/torvalds/linux/archive/v$(KERNEL_VER).tar.gz
-KERNEL         = linux-$(KERNEL_VER)
-KERNEL_CONFIG  = $(KERNEL).config
-KERNEL_ARCHIVE = $(KERNEL).tar.gz
-CLEANFILES     += $(KERNEL) $(KERNEL_ARCHIVE)
+KERNEL_VER       = 5.1
+KERNEL_URL       = https://github.com/torvalds/linux/archive/v$(KERNEL_VER).tar.gz
+KERNEL           = linux-$(KERNEL_VER)
+KERNEL_CONFIG    = $(KERNEL).config
+KERNEL_ARCHIVE   = $(KERNEL).tar.gz
+DISTCLEANFILES  += $(KERNEL) $(KERNEL_ARCHIVE)
 
-all: $(KERNEL)/arch/$(ARCH)/boot/bzImage
+CPP_SRC          = $(shell find test/ -name '*Test.cpp')
+CPP_HDR          = $(shell find test/ -name '*.hpp')
+TEST             = $(CPP_SRC:.cpp=)
+CLEANFILES      += $(TEST)
+
+#all: $(KERNEL)/arch/$(ARCH)/boot/bzImage
+all: $(TEST)
 
 # rules to build busybox
 $(BUSYBOX_ARCHIVE):
@@ -104,6 +116,7 @@ $(INITRAMFS): $(BUSYBOX)/busybox $(DROPBEAR)/dropbear $(DROPBEAR)/scp $(GBRIDGE)
 	cp busybox-rcS.sh $@/etc/init.d/rcS
 	chmod +x $@/etc/init.d/rcS
 	cp $(GBRIDGE)/gbridge $@/bin/gbridge
+	touch $@
 
 # rules to build the Linux kernel
 $(KERNEL_ARCHIVE):
@@ -134,3 +147,14 @@ qemu: $(KERNEL)/arch/$(ARCH)/boot/bzImage
 
 clean:
 	rm -Rf $(CLEANFILES)
+
+distclean:
+	rm -Rf $(CLEANFILES) $(DISTCLEANFILES)
+
+%: %.cpp $(CPP_HDR)
+	$(CXX) $(CXXFLAGS) `pkg-config --cflags gtest` -o $@ $< `pkg-config --libs gtest gtest_main`
+
+check: $(TEST)
+	for i in $(TEST); do \
+		./$$i; \
+	done
