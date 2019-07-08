@@ -6,6 +6,7 @@ addons:
   apt:
     packages:
     - build-essential
+    - cmake
     - git
     - libnl-genl-3-dev
     - autoconf
