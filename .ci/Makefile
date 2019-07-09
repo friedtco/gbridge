@@ -152,7 +152,7 @@ distclean:
 	rm -Rf $(CLEANFILES) $(DISTCLEANFILES)
 
 %: %.cpp $(CPP_HDR)
-	$(CXX) $(CXXFLAGS) `pkg-config --cflags gtest` -o $@ $< `pkg-config --libs gtest gtest_main`
+	$(CXX) $(CXXFLAGS) -I../../ -I../ `pkg-config --cflags gtest` -o $@ $< `pkg-config --libs gtest gtest_main`
 
 check: $(TEST)
 	for i in $(TEST); do \
