@@ -191,15 +191,17 @@ public:
 
 		for( int i = 3; i; i-- ) {
 			if ( ! isRunning() ) {
-				return;
+				break;
 			}
 			using namespace std::chrono_literals;
 			std::this_thread::sleep_for(1s);
 		}
 
-		r = ::kill( pid, SIGKILL );
-		if ( -1 == r ) {
-			throw std::system_error( errno, std::system_category(), "kill(" + std::to_string( int( pid ) ) + ", SIGKILL)" );
+		if ( isRunning() ) {
+			r = ::kill( pid, SIGKILL );
+			if ( -1 == r ) {
+				throw std::system_error( errno, std::system_category(), "kill(" + std::to_string( int( pid ) ) + ", SIGKILL)" );
+			}
 		}
 
 		r = ::write( cancelSock[ PIPE_WRITE ], "x", 1 );

@@ -29,6 +29,18 @@ protected:
 
 		using namespace std::chrono_literals;
 		qemuChildProcess = std::make_shared<ChildProcess>( args );
+
+		for(
+			std::string out = qemuChildProcess->getStdOut();
+			true;
+			out = qemuChildProcess->getStdOut()
+		) {
+			if ( std::string::npos != out.find( "dropbear" ) ) {
+				// detected dropbear running
+				break;
+			}
+			std::this_thread::sleep_for( 10ms );
+		}
 	}
 	virtual void TearDown() override {
 		qemuChildProcess->kill();
