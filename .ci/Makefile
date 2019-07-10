@@ -140,7 +140,7 @@ qemu: $(KERNEL)/arch/$(ARCH)/boot/bzImage
 		-nographic \
 		-cpu host \
 		-enable-kvm \
-		-netdev user,id=eth0,hostfwd=tcp::2222-:22,hostfwd=tcp::12345-:2345 \
+		-netdev user,id=eth0,hostfwd=tcp::2222-:22,hostfwd=tcp::12345-:2345,hostfwd=tcp::36484-:18242 \
 		-device e1000,netdev=eth0 \
 		-kernel $(KERNEL)/arch/$(ARCH)/boot/bzImage \
 		-append "console=ttyS0 root=/dev/ram0"

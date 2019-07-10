@@ -37,8 +37,8 @@
 #include <controller.h>
 
 // this 'G' << 8 | 'B' works out to 18242
-#define GBRIDGE_TCPIP_PORT                \
-	(                                     \
+#define GBRIDGE_TCPIP_PORT                        \
+	(                                         \
 		0                                 \
 		| ((unsigned)('G' << 8) & 0xff00) \
 		| ((unsigned)('B' << 0) & 0x00ff) \
@@ -302,6 +302,7 @@ static int tcpip_init(struct controller *ctrl)
 		pr_err("Failed in call to listen\n");
 		goto close_socket;
 	}
+	pr_info("TCP/IP: Listening on port %u\n", GBRIDGE_TCPIP_PORT);
 
 	r = socketpair(AF_UNIX, SOCK_STREAM, 0, tcpip_ctrl->cancel_socket);
 	if (-1 == r) {
