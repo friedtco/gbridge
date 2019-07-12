@@ -113,7 +113,7 @@ static int uart_hotplug(struct controller *ctrl)
 
 static int uart_write(struct connection * conn, void *data, size_t len)
 {
-	struct uart_controller *ctrl = conn->intf->ctrl->priv;
+	struct uart_controller *ctrl = conn->intf1->ctrl->priv;
 
 	cport_pack(data, conn->cport2_id);
 	return write(ctrl->fd, data, len);

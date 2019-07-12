@@ -186,7 +186,7 @@ static int bluetooth_scan(struct controller *ctrl)
 
 static int bluetooth_write(struct connection *conn, void *data, size_t len)
 {
-	struct interface *intf = conn->intf;
+	struct interface *intf = conn->intf1;
 	struct bluetooth_device *bd = intf->priv;
 
 	cport_pack(data, conn->cport2_id);
