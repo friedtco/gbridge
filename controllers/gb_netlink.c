@@ -171,27 +171,31 @@ static int netlink_hd_reset(void)
 
 void *nl_recv_cb(void *data)
 {
-	int ret;
+	static int ret;
 	struct controller *ctrl = data;
 
 	if (!interface_create(ctrl, 0, 0, 0, NULL)) {
 		pr_err("Failed to create AP interface\n");
-		return NULL;
+		return & ret;
 	}
 
 	ret = svc_register_driver();
 	if (ret) {
 		pr_err("Failed to register SVC\n");
-		return NULL;
+		return & ret;
 	}
 
 	/* HACK: create a connection for SVC */
-	connection_create(0, 0, 0, 0);
+	ret = connection_create(0, 0, 0, 0);
+	if (ret) {
+		pr_err( "Failed to create connection\n" );
+		return & ret;
+	}
 
 	ret = svc_init();
 	if (ret) {
 		pr_err("Failed to init SVC\n");
-		return NULL;
+		return & ret;
 	}
 
 	while (1) {
@@ -199,10 +203,16 @@ void *nl_recv_cb(void *data)
 		if (ret < 0) {
 			pr_err("Failed to receive message: %s\n",
 			       nl_geterror(ret));
+
+			struct timeval sleeptime = {
+				.tv_sec = 0,
+				.tv_usec = 100000,
+			};
+			select( 0, NULL, NULL, NULL, & sleeptime );
 		}
 	}
 
-	return NULL;
+	return & ret;
 }
 
 int events_cb(struct nl_msg *msg, void *arg)
@@ -215,11 +225,24 @@ int netlink_init(struct controller * ctrl)
 	int ret;
 
 	sock = nl_socket_alloc();
+	if ( NULL == sock ) {
+		pr_err("Failed to allocate netlink socket\n");
+		goto error;
+	}
 	nl_socket_set_local_port(sock, GB_NL_PID);
 	nl_socket_disable_seq_check(sock);
 	nl_socket_disable_auto_ack(sock);
-	nl_socket_modify_cb(sock, NL_CB_VALID, NL_CB_CUSTOM, events_cb, NULL);
-	nl_connect(sock, NETLINK_GENERIC);
+	ret = nl_socket_modify_cb(sock, NL_CB_VALID, NL_CB_CUSTOM, events_cb, NULL);
+	if (ret < 0) {
+		pr_err("Failed to modify netlink socket callback\n");
+		goto error;
+	}
+
+	ret = nl_connect(sock, NETLINK_GENERIC);
+	if (ret < 0) {
+		pr_err("Failed to connect\n");
+		goto error;
+	}
 
 	ret = genl_register_family(&ops);
 	if (ret < 0) {
@@ -233,11 +256,20 @@ int netlink_init(struct controller * ctrl)
 		goto error;
 	}
 
-	return pthread_create(&nl_recv_thread, NULL, nl_recv_cb, ctrl);
+	ret = pthread_create(&nl_recv_thread, NULL, nl_recv_cb, ctrl);
+	if (ret) {
+		pr_err("Failed to create thread\n");
+		goto error;
+	}
+
+	return 0;
 
  error:
-	nl_close(sock);
-	nl_socket_free(sock);
+ 	if ( NULL != sock ) {
+ 		nl_close(sock);
+ 		nl_socket_free(sock);
+ 		sock = NULL;
+ 	}
 
 	return ret;
 }

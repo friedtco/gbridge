@@ -408,7 +408,9 @@ void register_controllers(void)
 #ifdef HAVE_AVAHI
 	register_controller(&avahi_controller);
 #endif
+#ifdef HAVE_TCPIP
 	register_controller(&tcpip_controller);
+#endif
 }
 
 static void *controller_loop(void *data)

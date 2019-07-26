@@ -73,6 +73,16 @@ AC_ARG_ENABLE([gbsim],
 esac])
 AM_CONDITIONAL([GBSIM], [test x$gbsim = xtrue])
 
+AC_ARG_ENABLE([tcpip],
+[  --enable-tcpip    Enable TCPIP],
+[case "${enableval}" in
+	yes) tcpip=true ;
+	     AC_DEFINE([TCPIP], [1], ["TCPIP support"]) ;;
+	no)  tcpip=false ;;
+	*) AC_MSG_ERROR([bad value ${enableval} for --enable-tcpip]) ;;
+esac])
+AM_CONDITIONAL([TCPIP], [test x$tcpip = xtrue])
+
 AC_ARG_VAR([GBDIR], ["greybus sources directory"])
 AS_IF([test "$GBDIR" = ""], [
   AC_MSG_ERROR([Environment variable GBDIR needs to be set])

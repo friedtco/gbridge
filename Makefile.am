@@ -9,8 +9,6 @@ gbridge_SOURCES = main.c \
 		  controller.c \
 		  protocols/svc.c
 
-gbridge_SOURCES += controllers/tcpip.c
-
 if NETLINK
 gbridge_CFLAGS  += `pkg-config --cflags libnl-3.0 libnl-genl-3.0`
 gbridge_SOURCES += controllers/gb_netlink.c
@@ -34,4 +32,8 @@ gbridge_SOURCES += controllers/gbsim.c
 gbridge_SOURCES += protocols/manifest.c
 gbridge_SOURCES += protocols/control.c
 gbridge_SOURCES += protocols/loopback.c
+endif
+
+if TCPIP
+gbridge_SOURCES += controllers/tcpip.c
 endif
