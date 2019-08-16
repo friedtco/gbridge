@@ -22,6 +22,6 @@ before_script:
 
 script:
   - sudo sh -c "apt update && apt install -y linux-headers-`uname -r`"
-  - cd .ci && make -j`nproc --all`
+  - cd .ci && make -j`nproc --all` check
 notifications:
   email: false
