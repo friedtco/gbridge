@@ -176,6 +176,7 @@ TEST( ChildProcess, EchoHelloWorld ) {
 /*
  * This test ensures that a deadline of 1s is observed for executing the command
  */
+/*
 TEST( ChildProcess, Yes ) {
 
 	int expected_int;
@@ -210,3 +211,4 @@ TEST( ChildProcess, Yes ) {
 	actual_string = cp.getStdErr();
 	EXPECT_EQ( actual_string, expected_string );
 }
+*/
