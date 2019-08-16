@@ -190,7 +190,7 @@ TEST( ChildProcess, Yes ) {
 	ChildProcess cp( argv, 500ms );
 
 	// The 'yes' command is designed to run forever, and so we will definitely
-	// hit the 3s deadline and kill the program. When the process stops due to
+	// hit the 500ms deadline and kill the program. When the process stops due to
 	// a signal, the return value is the signal that stopped it.
 	expected_int = SIGTERM;
 	actual_int = cp.getExitStatus();
