@@ -2,6 +2,7 @@
 
 using namespace std;
 
+/*
 TEST_F( QemuSystemTestFixture, Null ) {
 }
 
@@ -28,3 +29,4 @@ TEST_F( QemuSystemTestFixture, SshHelloWorld ) {
 	actual_string = hi.getStdOut();
 	EXPECT_EQ( actual_string, expected_string );
 }
+*/
