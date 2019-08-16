@@ -30,7 +30,7 @@
 static struct nl_sock *sock;
 static pthread_t nl_recv_thread;
 static struct nla_policy gb_nl_policy[GB_NL_A_MAX + 1] = {
-	[GB_NL_A_DATA] = {.type = NLA_BINARY,.maxlen = GB_NETLINK_MTU},
+	[GB_NL_A_DATA] = {.type = NLA_UNSPEC,.maxlen = GB_NETLINK_MTU},
 	[GB_NL_A_CPORT] = {.type = NLA_U32},
 };
 

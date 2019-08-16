@@ -115,6 +115,10 @@ static void tcpip_hotplug(struct controller *ctrl, const char *host_name,
 		goto err_free_td;
 	strcpy(td->host_name, host_name);
 
+	if ( 0 != strcmp( "127.0.0.1", td->addr ) ) {
+		goto err_free_td;
+	}
+
 	/* FIXME: use real IDs */
 	intf = interface_create(ctrl, 1, 1, 0x1234, td);
 	if (!intf)
