@@ -1,0 +1,22 @@
+dist: xenial
+sudo: true
+language:
+- c
+addons:
+  apt:
+    packages:
+    - build-essential
+    - git
+    - libnl-genl-3-dev
+    - autoconf
+    - automake
+    - libtool
+    - pkg-config
+    - libbluetooth-dev
+    - libavahi-common-dev
+    - libavahi-client-dev
+script:
+  - sudo sh -c "apt update && apt install -y linux-headers-`uname -r`"
+  - cd .ci && make -j`nproc --all`
+notifications:
+  email: false
