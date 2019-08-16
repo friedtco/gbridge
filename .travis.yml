@@ -6,6 +6,7 @@ addons:
   apt:
     packages:
     - build-essential
+    - cmake
     - git
     - libnl-genl-3-dev
     - autoconf
@@ -15,8 +16,12 @@ addons:
     - libbluetooth-dev
     - libavahi-common-dev
     - libavahi-client-dev
+
+before_script:
+  - sudo sh .ci/scripts/build-and-install-libgtest-libraries.sh
+
 script:
   - sudo sh -c "apt update && apt install -y linux-headers-`uname -r`"
-  - cd .ci && make -j`nproc --all`
+  - cd .ci && make -j`nproc --all` check
 notifications:
   email: false

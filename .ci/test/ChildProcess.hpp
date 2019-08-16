@@ -121,6 +121,16 @@ public:
 	}
 
 	/**
+	 * Get the process ID of the child process
+	 *
+	 * @return the process ID of the child process if the child process exists
+	 * @return (pid_t)-1 if the child process does not exist
+	 */
+	::pid_t getPid() {
+		return pid;
+	}
+
+	/**
 	 * Determine whether the child process is running
 	 *
 	 * @return true  if the child is running
@@ -150,6 +160,7 @@ public:
 				throw std::system_error( errno, std::system_category(), "waitid" );
 			}
 			exitStatus = info.si_status;
+			pid = -1;
 		}
 
 		return exitStatus;
@@ -184,24 +195,28 @@ public:
 			throw std::system_error( errno, std::system_category(), "write" );
 		}
 
-		r = ::kill( pid, SIGTERM );
-		if ( -1 == r ) {
-			throw std::system_error( errno, std::system_category(), "kill(" + std::to_string( int( pid ) ) + ", SIGTERM)" );
-		}
+		if ( -1 != pid ) {
 
-		for( int i = 3; i; i-- ) {
-			if ( ! isRunning() ) {
-				break;
-			}
-			using namespace std::chrono_literals;
-			std::this_thread::sleep_for(1s);
-		}
-
-		if ( isRunning() ) {
-			r = ::kill( pid, SIGKILL );
+			r = ::kill( pid, SIGTERM );
 			if ( -1 == r ) {
-				throw std::system_error( errno, std::system_category(), "kill(" + std::to_string( int( pid ) ) + ", SIGKILL)" );
+				throw std::system_error( errno, std::system_category(), "kill(" + std::to_string( int( pid ) ) + ", SIGTERM)" );
 			}
+
+			for( int i = 3; i; i-- ) {
+				if ( ! isRunning() ) {
+					break;
+				}
+				using namespace std::chrono_literals;
+				std::this_thread::sleep_for(1s);
+			}
+
+			if ( isRunning() ) {
+				r = ::kill( pid, SIGKILL );
+				if ( -1 == r ) {
+					throw std::system_error( errno, std::system_category(), "kill(" + std::to_string( int( pid ) ) + ", SIGKILL)" );
+				}
+			}
+			pid = -1;
 		}
 
 		r = ::write( cancelSock[ PIPE_WRITE ], "x", 1 );
@@ -244,7 +259,7 @@ protected:
 			throw std::system_error( errno, std::system_category(), "fork" );
 		}
 		if ( pid > 0 ) {
-			// parent process. close unused file descriptors
+		    // parent process. close unused file descriptors
 		    ::close( stdInPipe[ PIPE_READ ] );
 		    ::close( stdOutPipe[ PIPE_WRITE ] );
 		    ::close( stdErrPipe[ PIPE_WRITE ] );
@@ -252,8 +267,6 @@ protected:
 			mon = std::thread( std::bind( & ChildProcess::monitorThreadFunction, this ) );
 		    return;
 		}
-
-		// child process
 
 		std::array<std::pair<int,int>,3> redirects = {{
 			{ stdInPipe[ PIPE_READ ], STDIN_FILENO },
@@ -362,12 +375,18 @@ protected:
 				// timeout
 			}
 			if ( -1 == r ) {
+				if ( EBADF == errno ) {
+					break;
+				}
 				throw std::system_error( errno, std::system_category(), "select" );
 			}
 			if ( FD_ISSET( stdOutPipe[ PIPE_READ ], & rfds ) ) {
 				std::lock_guard<std::mutex> lock( stdOutMutex );
 				r = ::read( stdOutPipe[ PIPE_READ ], buff.begin(), buff.size() );
 				if ( -1 == r ) {
+					if ( EBADF == errno ) {
+						break;
+					}
 					throw std::system_error( errno, std::system_category(), "read" );
 				}
 				stdOut += std::string( buff.begin(), buff.begin() + r );
@@ -376,6 +395,9 @@ protected:
 				std::lock_guard<std::mutex> lock( stdErrMutex );
 				r = ::read( stdErrPipe[ PIPE_READ ], buff.begin(), buff.size() );
 				if ( -1 == r ) {
+					if ( EBADF == errno ) {
+						break;
+					}
 					throw std::system_error( errno, std::system_category(), "read" );
 				}
 				stdErr += std::string( buff.begin(), buff.begin() + r );

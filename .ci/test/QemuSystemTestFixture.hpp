@@ -28,18 +28,14 @@ protected:
 		};
 
 		using namespace std::chrono_literals;
-		qemuChildProcess = std::make_shared<ChildProcess>( args );
-
+		qemuChildProcess = std::make_shared<ChildProcess>( args, 10s );
+		std::cerr << "Child process has PID: " << int(qemuChildProcess->getPid()) << std::endl;
 		for(
 			std::string out = qemuChildProcess->getStdOut();
-			true;
+			qemuChildProcess->isRunning() && std::string::npos == out.find( "dropbear" );
 			out = qemuChildProcess->getStdOut()
 		) {
-			if ( std::string::npos != out.find( "dropbear" ) ) {
-				// detected dropbear running
-				break;
-			}
-			std::this_thread::sleep_for( 10ms );
+			std::this_thread::sleep_for( 250ms );
 		}
 	}
 	virtual void TearDown() override {
