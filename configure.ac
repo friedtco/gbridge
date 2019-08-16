@@ -3,7 +3,7 @@
 
 AC_PREREQ([2.69])
 AC_INIT([greybus-bridge], [0.1], [])
-AM_INIT_AUTOMAKE([subdir-objects])
+AM_INIT_AUTOMAKE([subdir-objects foreign])
 
 
 # Checks for programs.
