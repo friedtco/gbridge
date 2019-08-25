@@ -1,6 +1,7 @@
 /*
  * GBridge (Greybus Bridge)
  * Copyright (c) 2016 Alexandre Bailon
+ * Copyright (c) 2019 Christopher Friedt
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,6 +25,7 @@
 #include <controller.h>
 
 #include "gbridge.h"
+#include "pkauth.h"
 #include "controllers/uart.h"
 
 int run;
@@ -36,6 +38,12 @@ static void help(void)
 		"uart options:\n"
 		"\t-p uart_device: set the uart device\n"
 		"\t-b baudrate: set the uart baudrate\n"
+#endif
+#ifdef HAVE_TCPIP
+		"tcpip options:\n"
+		"\t-k path to id_rsa\n"
+		"\t-a path to authorized keys\n"
+		"\t-t rx timeout (ms), 0 for infinity\n"
 #endif
 		);
 }
@@ -52,6 +60,9 @@ int main(int argc, char *argv[])
 
 	int baudrate = 115200;
 	const char *uart = NULL;
+	char *id_rsa = NULL;
+	char *authorized_keys = NULL;
+	unsigned timeout_ms;
 
 	signal(SIGINT, signal_handler);
 	signal(SIGHUP, signal_handler);
@@ -59,7 +70,7 @@ int main(int argc, char *argv[])
 
 	register_controllers();
 
-	while ((c = getopt(argc, argv, "p:b:m:")) != -1) {
+	while ((c = getopt(argc, argv, "p:b:m:k:a:ht:")) != -1) {
 		switch(c) {
 		case 'p':
 			uart = optarg;
@@ -80,6 +91,22 @@ int main(int argc, char *argv[])
 			pr_err("You must build gbridge with gbsim enabled\n");
 			return -EINVAL;
 #endif
+		case 'k':
+			id_rsa = optarg;
+			break;
+
+		case 'a':
+			authorized_keys = optarg;
+			break;
+
+		case 't':
+			if (1 == sscanf(optarg, "%u", &timeout_ms)) {
+				pkauth_set_timeout_ms(timeout_ms);
+				break;
+			}
+			/* no break */
+
+		case 'h':
 		default:
 			help();
 			return -EINVAL;
@@ -96,6 +123,13 @@ int main(int argc, char *argv[])
 		ret = register_uart_controller(uart, baudrate);
 		if (ret)
 			return ret;
+	}
+
+	if (id_rsa && authorized_keys) {
+		pkauth_init_from(id_rsa, authorized_keys);
+	} else if (id_rsa || authorized_keys) {
+		pr_err("for ssl, please pass both -k and -a options\n");
+		return -EINVAL;
 	}
 
 	run = 1;

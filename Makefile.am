@@ -3,6 +3,7 @@ bin_PROGRAMS = gbridge
 gbridge_CFLAGS = -Wall -Werror -I${GBDIR}
 gbridge_CFLAGS += `pkg-config --cflags libnl-3.0 libnl-genl-3.0`
 gbridge_CFLAGS += `pkg-config --cflags bluez`
+gbridge_LDADD =
 
 gbridge_SOURCES = main.c \
 		  debug.c \
@@ -16,6 +17,11 @@ endif
 
 if TPCIP
 gbridge_SOURCES += controllers/tcpip.c
+if SSL
+gbridge_SOURCES += pkauth.c 
+gbridge_CFLAGS += @SSL_CFLAGS@
+gbridge_LDADD += @SSL_LIBS@
+endif
 endif
 
 if BLUETOOTH

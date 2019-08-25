@@ -106,4 +106,6 @@ int greybus_handler(uint8_t intf_id, uint16_t cport_id,
 int greybus_send_request(uint8_t intf_id, uint16_t cport_id,
 			 struct operation *op);
 
+uint8_t greybus_errno_to_result(int err);
+
 #endif /* _GREYBUS_H_ */
