@@ -43,6 +43,40 @@ AC_ARG_ENABLE([tcpip],
 esac])
 AM_CONDITIONAL([TPCIP], [test x$tcpip = xtrue])
 
+# see autotools mythbuster
+with_ssl="auto"
+AC_ARG_WITH(
+	[ssl],
+	[AS_HELP_STRING(
+		[--with-ssl],
+		[Enable ssl]
+	)]
+)
+AS_IF(
+	[test "x$with_ssl" != "xno"],
+
+	[PKG_CHECK_MODULES(
+		[SSL],
+		[openssl],
+		[have_ssl=yes],
+		[have_ssl=no]
+	)],
+
+	[have_ssl=no]
+)
+AS_IF(
+	[test "x$have_ssl" = "xyes"],
+	[
+		AC_SUBST([SSL_LIBS])
+		AC_SUBST([SSL_CFLAGS])
+		AC_DEFINE([SSL], [1], ["SSL support"])
+	],
+	[AS_IF([test "x$with_ssl" = "xyes"],
+		[AC_MSG_ERROR([ssl requested but not found])
+	])
+])
+AM_CONDITIONAL([SSL],[test "x$have_ssl" = "xyes"])
+
 AC_ARG_ENABLE([uart],
 [  --enable-uart    Enable uart],
 [case "${enableval}" in

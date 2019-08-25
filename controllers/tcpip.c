@@ -16,6 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "config.h"
+
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,6 +37,10 @@
 #include <debug.h>
 #include <gbridge.h>
 #include <controller.h>
+
+#if SSL
+#include "pkauth.h"
+#endif
 
 struct tcpip_connection {
 	int sock;
@@ -82,6 +88,18 @@ static int tcpip_connection_create(struct connection *conn)
 		if (ret)
 			sleep(1);
 	} while (ret);
+
+#if SSL
+	ret = pkauth_enticate(tconn->sock);
+	if (ret) {
+		close(tconn->sock);
+		free(tconn);
+		pr_err("Public-key authentication failed with module at %s:%d\n",
+			td->addr, td->port);
+		return ret;
+	}
+#endif
+
 	pr_info("Connected to module\n");
 
 	return 0;
