@@ -24,22 +24,52 @@
 #include <sys/select.h>
 #include <sys/types.h>
 
+#include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/rand.h>
 
 #include "debug.h"
 #include "gbridge.h"
 #include "greybus.h"
+#include "greybus_protocols.h"
 #include "pkauth.h"
+
+#ifndef ARRAY_SIZE
+#define ARRAY_SIZE(x) (sizeof(x)/sizeof((x)[0]))
+#endif
 
 #ifndef MIN
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #endif
 
+#define PKAUTH_AES_BLOCK_SIZE 16
+
+typedef const EVP_CIPHER *(*cbc_inst_func)(void);
+struct supported_cbc_inst {
+	int keysize;
+	cbc_inst_func cbc_inst;
+};
+
 static uint16_t pkauth_operation_id;
 static char *pkauth_authorized_keys;
 static RSA *pkauth_id_rsa;
 static unsigned pkauth_timeout_ms;
+
+
+static const struct supported_cbc_inst pkauth_cbc_inst[] = {
+	{ 16, EVP_aes_128_cbc },
+	{ 24, EVP_aes_192_cbc },
+	{ 32, EVP_aes_256_cbc },
+};
+
+static cbc_inst_func pkauth_cbc_inst_by_size( size_t size ) {
+	for( size_t i = 0; i < ARRAY_SIZE(pkauth_cbc_inst); i++ ) {
+		if ( pkauth_cbc_inst[ i ].keysize == size ) {
+			return pkauth_cbc_inst[ i ].cbc_inst;
+		}
+	}
+	return NULL;
+}
 
 static int pkauth_buffer_file(const char *path, char **buffer, size_t *len) {
 
@@ -872,8 +902,6 @@ static int pkauth_challenge_a(int fd, const char *device_pubkey) {
 		goto out;
 	}
 
-	pr_info( "pkauth_challenge_a succeeded\n" );
-
 	r = 0;
 
 out:
@@ -914,8 +942,6 @@ static int pkauth_challenge_b(int fd, const char *device_pubkey) {
 	uint8_t *ciphertext = NULL;
 	size_t ciphertext_size;
 
-	pr_info( "preparing challenge\n" );
-
 	// let's say we want to have a plaintext challenge with length in [128,300]
 	RAND_bytes((uint8_t *)&plaintext_size, (int)sizeof(plaintext_size));
 	plaintext_size %= (300 - 128) + 1;
@@ -928,8 +954,6 @@ static int pkauth_challenge_b(int fd, const char *device_pubkey) {
 		goto out;
 	}
 	RAND_bytes(plaintext, plaintext_size);
-
-	pr_info( "encrypting challenge with device public key\n" );
 
 	r = pkauth_encrypt_with_pubkey(device_pubkey, plaintext, plaintext_size, &ciphertext, &ciphertext_size);
 	if (r) {
@@ -949,23 +973,17 @@ static int pkauth_challenge_b(int fd, const char *device_pubkey) {
 	msg->type = GB_PKAUTH_TYPE_CHALLENGE;
 	memcpy((uint8_t *)msg + sizeof(*msg), ciphertext, ciphertext_size);
 
-	pr_info( "sending challenge\n" );
-
 	r = pkauth_tx(fd, msg);
 	if (r) {
 		pr_err("failed to send CHALLENGE\n");
 		goto out;
 	}
 
-	pr_info( "receiving CHALLENGE response\n" );
-
 	r = pkauth_rx(fd, &msg, GB_PKAUTH_TYPE_CHALLENGE | OP_RESPONSE);
 	if (r) {
 		pr_err("failed to receive CHALLENGE response\n");
 		goto out;
 	}
-
-	pr_info( "receiving CHALLENGE_RESP\n" );
 
 	r = pkauth_rx(fd, &msg, GB_PKAUTH_TYPE_CHALLENGE_RESP);
 	if (r) {
@@ -975,8 +993,6 @@ static int pkauth_challenge_b(int fd, const char *device_pubkey) {
 	msg_size = le16toh(msg->size);
 	payload_size = msg_size - sizeof(*msg);
 	payload = (struct gb_pkauth_payload *)((uint8_t *)msg + sizeof(*msg));
-
-	pr_info( "decrypting CHALLENGE_RESP\n" );
 
 	r = pkauth_decrypt_with_privkey((uint8_t *)payload, payload_size, &plaintext2, &plaintext2_size);
 	if (r) {
@@ -1029,7 +1045,102 @@ out:
 	return r;
 }
 
-int pkauth_enticate(int fd) {
+static int pkauth_set_session_key(int fd, const char *device_pubkey, uint8_t **session_key, size_t session_key_len) {
+
+	int r;
+	uint8_t *ciphertext = NULL;
+	size_t ciphertext_len = 0;
+	struct gb_operation_msg_hdr *msg = NULL;
+	size_t msg_size = 0;
+	cbc_inst_func cbc_inst;
+
+	if (NULL == session_key) {
+		r = -EINVAL;
+		pr_err("one or more arguments were NULL or invalid\n");
+		goto out;
+	}
+
+	cbc_inst = pkauth_cbc_inst_by_size(session_key_len);
+	if (NULL == cbc_inst) {
+		r = -EINVAL;
+		pr_err("invalid session key length %u\n", (unsigned)session_key_len);
+		goto out;
+	}
+
+	*session_key = malloc(session_key_len);
+	if (NULL == *session_key) {
+		r = -ENOMEM;
+		pr_err("failed to allocate memory for session key\n");
+		goto out;
+	}
+
+	RAND_bytes(*session_key, session_key_len);
+
+	r = pkauth_encrypt_with_pubkey((const char *)device_pubkey, *session_key, session_key_len, &ciphertext, &ciphertext_len);
+	if (r) {
+		pr_err("pkauth_encrypt_with_pubkey failed\n");
+		goto freesessionkey;
+	}
+
+	msg_size = ciphertext_len + sizeof(*msg);
+	msg = malloc(msg_size);
+	if (NULL == msg) {
+		r = -ENOMEM;
+		pr_err("failed to allocate memory");
+		goto freesessionkey;
+	}
+	memcpy((uint8_t *)msg + sizeof(*msg), ciphertext, ciphertext_len);
+
+	memset(msg, 0, sizeof(*msg));
+	msg->size = htole16(msg_size);
+	msg->operation_id = htole16(pkauth_operation_id++);
+	msg->type = GB_PKAUTH_TYPE_SESSION_KEY;
+
+	r = pkauth_tx(fd, msg);
+	if (r) {
+		pr_err("pkauth_tx failed\n");
+		goto freesessionkey;
+	}
+
+	r = pkauth_rx(fd, &msg, GB_PKAUTH_TYPE_SESSION_KEY | OP_RESPONSE);
+	if (r) {
+		pr_err("pkauth_rx failed\n");
+		goto freesessionkey;
+	}
+
+	if (GB_SVC_OP_SUCCESS != msg->result) {
+		r = -EIO;
+		pr_err("GB_PKAUTH_TYPE_SESSION_KEY failed\n");
+		goto freesessionkey;
+	}
+
+	r = 0;
+	goto out;
+
+freesessionkey:
+	memset(*session_key, 0,session_key_len);
+	free(*session_key);
+	*session_key = NULL;
+	session_key_len = 0;
+
+out:
+	if (!(NULL == ciphertext || 0 == ciphertext_len)) {
+		memset(ciphertext, 0,ciphertext_len);
+		free(ciphertext);
+	}
+	ciphertext = NULL;
+	ciphertext_len = 0;
+
+	if (NULL != msg) {
+		free(msg);
+	}
+	msg = NULL;
+	msg_size = 0;
+
+	return r;
+}
+
+int pkauth_enticate(int fd, uint8_t **session_key, size_t session_key_len) {
 
 	int r;
 	char *device_pubkey;
@@ -1070,34 +1181,48 @@ int pkauth_enticate(int fd) {
 	// security concern. I.e. here we optimize for space (on the device),
 	// not speed (of authentication).
 
-	//  5.  Device creates a randomly generated message, "plaintext A".
-	//  6.  Device encrypts "plaintext A" using Host public key, creating "CipherText A".
+	//  5.  Device creates a randomly generated message, "PlainText A".
+	//  6.  Device encrypts "PlainText A" using Host public key, creating "CipherText A".
 	//  7.  Device transmits "CipherText A" to Host.
-	//  8.  Host decrypts "CipherText A" with Host private key, resulting in "plaintext B".
-	//  9.  Host encrypts "plaintext B" using Device public key, creating "CipherText B".
+	//  8.  Host decrypts "CipherText A" with Host private key, resulting in "PlainText B".
+	//  9.  Host encrypts "PlainText B" using Device public key, creating "CipherText B".
 	//  10. Host transmits "CipherText B" to Device.
-	//  11. Device decrypts "CipherText B" with Device private key, resulting in "plaintext C".
-	//  12. Device compares "plaintext A" and "plaintext C", and responds with success or noauth.
+	//  11. Device decrypts "CipherText B" with Device private key, resulting in "PlainText C".
+	//  12. Device compares "PlainText A" and "PlainText C", and responds with success or noauth.
 	r = pkauth_challenge_a(fd, device_pubkey);
 	if (r) {
 		pr_err("pkauth_challenge_a failed\n");
 		goto freedevicepubkey;
 	}
 
-	//  13. Host creates a randomly generated message, "plaintext D".
-	//  14. Host encrypts "plaintext D" using Device public key, creating "CipherText D".
+	//  13. Host creates a randomly generated message, "PlainText D".
+	//  14. Host encrypts "PlainText D" using Device public key, creating "CipherText D".
 	//  15. Host transmits "CipherText D" to Device.
-	//  16. Device decrypts "CipherText D" with Device private key, resulting in "plaintext E".
-	//  17. Device encrypts "plaintext E" using Host public key, creating "CipherText E".
+	//  16. Device decrypts "CipherText D" with Device private key, resulting in "PlainText E".
+	//  17. Device encrypts "PlainText E" using Host public key, creating "CipherText E".
 	//  18. Device transmits "CipherText E" to Host.
-	//  19. Host decrypts "CipherText E" with Host private key, resulting in "plaintext F".
-	//  20. Host compares "plaintext D" and "plaintext F", and responds with success or noauth.
+	//  19. Host decrypts "CipherText E" with Host private key, resulting in "PlainText F".
+	//  20. Host compares "PlainText D" and "PlainText F", and responds with success or noauth.
 	r = pkauth_challenge_b(fd, device_pubkey);
 	if (r) {
 		pr_err("pkauth_challenge_b failed\n");
 		goto freedevicepubkey;
 	}
 
+	// At this point trust has been established
+
+	// 21. Host generates symmetric session key as "PlainText G", pairs session key with socket.
+	// 22. Host encrypts "PlainText G" with Device public key, resulting in "CipherText G".
+	// 23. Host transmits "CipherText G" to device.
+	// 24. Device decrypts "CipherText G" using Device private key, resulting in "PlainText H".
+	// 25. Device pairs the session key ("PlainText H") with socket.
+	r = pkauth_set_session_key(fd, device_pubkey, session_key, session_key_len);
+	if (r) {
+		pr_err("pkauth_set_session_key failed\n");
+		goto freedevicepubkey;
+	}
+
+	// All subsequent transactions encrypted using symmetric session key
 	r = 0;
 
 freedevicepubkey:
@@ -1107,5 +1232,228 @@ freedevicepubkey:
 	}
 
 out:
+	return r;
+}
+
+int pkauth_write(int fd, uint8_t *session_key, size_t session_key_len, uint8_t *plaintext, size_t plaintext_len) {
+
+	int r;
+	EVP_CIPHER_CTX *ctx;
+	cbc_inst_func cbc_inst;
+	uint8_t iv[PKAUTH_AES_BLOCK_SIZE];
+	uint8_t *ciphertext;
+	size_t ciphertext_len;
+	size_t nblocks;
+	int len;
+	size_t remaining;
+	size_t written;
+	size_t offset;
+
+	if (NULL == session_key || 0 == session_key_len || NULL == plaintext || 0 == plaintext_len) {
+		r = -EINVAL;
+		pr_err("one or more arguments were NULL or invalid\n");
+		goto out;
+	}
+
+	cbc_inst = pkauth_cbc_inst_by_size(session_key_len);
+	if (NULL == cbc_inst) {
+		pr_err("no suitable AES algorithm for key size %u\n", (unsigned)session_key_len);
+		r = -EINVAL;
+		goto out;
+	}
+
+	ctx = EVP_CIPHER_CTX_new();
+	if ( NULL == ctx ) {
+		pr_err("EVP_CIPHER_CTX_new failed\n");
+		r = -ENOMEM;
+		goto out;
+	}
+
+	RAND_bytes(iv, sizeof(iv));
+
+	r = EVP_EncryptInit_ex(ctx, cbc_inst(), NULL, session_key, iv);
+	if (1 != r) {
+		r = -EIO;
+		pr_err("EVP_EncryptInit_ex failed");
+		goto freectx;
+	}
+
+	nblocks = plaintext_len / PKAUTH_AES_BLOCK_SIZE;
+	if (0 != plaintext_len % PKAUTH_AES_BLOCK_SIZE) {
+		nblocks++;
+	}
+
+	ciphertext = malloc((nblocks + 1) * PKAUTH_AES_BLOCK_SIZE);
+	if (NULL == ciphertext) {
+		r = -ENOMEM;
+		pr_err("failed to allocate memory\n");
+		goto freectx;
+	}
+	memcpy(ciphertext, iv, PKAUTH_AES_BLOCK_SIZE);
+
+	r = EVP_EncryptUpdate(ctx, &ciphertext[sizeof(iv)], &len, plaintext, plaintext_len);
+	if (1 != r) {
+		r = -EIO;
+		pr_err("EVP_EncryptUpdate failed\n");
+		goto freeciphertext;
+	}
+	ciphertext_len = len;
+
+	r = EVP_EncryptFinal_ex(ctx, &ciphertext[PKAUTH_AES_BLOCK_SIZE + ciphertext_len], &len);
+	if (1 != r) {
+		r = -EIO;
+		pr_err("EVP_EncryptFinal_ex failed\n");
+		goto freeciphertext;
+	}
+	ciphertext_len += len;
+
+	for(remaining = sizeof(iv) + ciphertext_len, offset = 0; remaining; remaining -= written, offset += written) {
+		r = write(fd, &ciphertext[offset], remaining);
+		if (-1 == r) {
+			r = -errno;
+			pr_err("write: %s\n", strerror(errno));
+			goto freeciphertext;
+		}
+		written = r;
+	}
+
+	r = plaintext_len;
+
+freeciphertext:
+	memset(ciphertext, 0, ciphertext_len);
+	free(ciphertext);
+	ciphertext = NULL;
+
+freectx:
+	EVP_CIPHER_CTX_free(ctx);
+	ctx = NULL;
+
+out:
+	memset(iv, 0, sizeof(iv));
+	return r;
+}
+
+int pkauth_read(int fd, uint8_t *session_key, size_t session_key_len, uint8_t *plaintext, size_t plaintext_len) {
+
+	int r;
+	EVP_CIPHER_CTX *ctx;
+	cbc_inst_func cbc_inst;
+	uint8_t iv[PKAUTH_AES_BLOCK_SIZE];
+	uint8_t ciphertext[PKAUTH_AES_BLOCK_SIZE];
+	size_t msg_size;
+	size_t nblocks;
+	int len;
+	size_t remaining;
+	size_t recvd;
+	size_t offset;
+	size_t plaintext_offset;
+	struct gb_operation_msg_hdr *msg;
+
+	if (NULL == session_key || NULL == plaintext || plaintext_len < sizeof(msg)) {
+		r = -EINVAL;
+		pr_err("one or more arguments were NULL or invalid\n");
+		goto out;
+	}
+
+	cbc_inst = pkauth_cbc_inst_by_size(session_key_len);
+	if (NULL == cbc_inst) {
+		pr_err("no suitable AES algorithm for key size %u\n", (unsigned)session_key_len);
+		r = -EINVAL;
+		goto out;
+	}
+
+	ctx = EVP_CIPHER_CTX_new();
+	if (NULL == ctx) {
+		r = -ENOMEM;
+		pr_err("EVP_CIPHER_CTX_new failed\n");
+		goto out;
+	}
+
+	for(remaining = PKAUTH_AES_BLOCK_SIZE, offset = 0; remaining; remaining -= recvd, offset += recvd) {
+		r = read(fd, &iv[offset], remaining);
+		if (-1 == r) {
+			r = -errno;
+			pr_err("read: %s\n", strerror(errno));
+			goto freectx;
+		}
+		recvd = r;
+	}
+
+	r = EVP_DecryptInit_ex(ctx, cbc_inst(), NULL, session_key, iv);
+	if (1 != r) {
+		r = -EIO;
+		pr_err("EVP_DecryptInit_ex failed\n");
+		goto freectx;
+	}
+
+	for(remaining = PKAUTH_AES_BLOCK_SIZE, offset = 0; remaining; remaining -= recvd, offset += recvd) {
+		r = read(fd, &ciphertext[offset], remaining);
+		if (-1 == r) {
+			r = -errno;
+			pr_err("read: %s\n", strerror(errno));
+			goto freectx;
+		}
+		recvd = r;
+	}
+
+	plaintext_offset = 0;
+	r = EVP_DecryptUpdate(ctx, &plaintext[plaintext_offset], &len, ciphertext, sizeof(ciphertext));
+	if (1 != r) {
+		r = -EIO;
+		pr_err("EVP_DecryptUpdate failed\n");
+		goto freectx;
+	}
+	plaintext_offset += len;
+
+	msg = (struct gb_operation_msg_hdr *)plaintext;
+	msg_size = le16toh(msg->size);
+	nblocks = msg_size / PKAUTH_AES_BLOCK_SIZE;
+	if (0 != msg_size % PKAUTH_AES_BLOCK_SIZE) {
+		nblocks += 1;
+	}
+	nblocks -= 1; // account for the block that was just decrypted
+
+	if ( plaintext_len < msg_size ) {
+		r = -ENOMEM;
+		pr_err("plaintext_len (%u) is too small for message (%u)\n", (unsigned)plaintext_len, (unsigned)msg_size);
+		goto freectx;
+	}
+
+	for( ; nblocks; nblocks--) {
+		for(remaining = PKAUTH_AES_BLOCK_SIZE, offset = 0; remaining; remaining -= recvd, offset += recvd) {
+			r = read(fd, &ciphertext[offset], remaining);
+			if (-1 == r) {
+				r = -errno;
+				pr_err("read: %s\n", strerror(errno));
+				goto freectx;
+			}
+			recvd = r;
+		}
+		r = EVP_DecryptUpdate(ctx, &plaintext[plaintext_offset], &len, ciphertext, sizeof(ciphertext));
+		if (1 != r) {
+			r = -EIO;
+			pr_err("EVP_DecryptUpdate failed\n");
+			goto freectx;
+		}
+		plaintext_offset += len;
+	}
+
+	r = EVP_DecryptFinal_ex(ctx, &plaintext[plaintext_offset], &len);
+	if (1 != r) {
+		r = -EIO;
+		pr_err("EVP_DecryptFinal_ex failed\n");
+		goto freectx;
+	}
+	plaintext_offset += len;
+
+	r = plaintext_offset;
+
+freectx:
+	EVP_CIPHER_CTX_free(ctx);
+	ctx = NULL;
+
+out:
+	memset(iv, 0, sizeof(iv));
+	memset(ciphertext, 0, sizeof(ciphertext));
 	return r;
 }

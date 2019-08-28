@@ -44,6 +44,10 @@
 
 struct tcpip_connection {
 	int sock;
+#if SSL
+	uint8_t *session_key;
+	size_t session_key_len;
+#endif
 };
 
 struct tcpip_device {
@@ -90,7 +94,8 @@ static int tcpip_connection_create(struct connection *conn)
 	} while (ret);
 
 #if SSL
-	ret = pkauth_enticate(tconn->sock);
+	tconn->session_key_len = 16; // AES-128
+	ret = pkauth_enticate(tconn->sock, &tconn->session_key, tconn->session_key_len);
 	if (ret) {
 		close(tconn->sock);
 		free(tconn);
@@ -309,14 +314,22 @@ static void avahi_discovery_stop(struct controller *ctrl)
 static int tcpip_write(struct connection *conn, void *data, size_t len)
 {
 	struct tcpip_connection *tconn = conn->priv;
-
+#if SSL
+	if ( pkauth_initialized() ) {
+		return pkauth_write(tconn->sock, tconn->session_key, tconn->session_key_len, data, len);
+	}
+#endif
 	return write(tconn->sock, data, len);
 }
 
 static int tcpip_read(struct connection *conn, void *data, size_t len)
 {
 	struct tcpip_connection *tconn = conn->priv;
-
+#if SSL
+	if ( pkauth_initialized() ) {
+		return pkauth_read(tconn->sock, tconn->session_key, tconn->session_key_len, data, len);
+	}
+#endif
 	return read(tconn->sock, data, len);
 }
 

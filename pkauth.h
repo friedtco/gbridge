@@ -29,10 +29,11 @@
 #include "greybus_protocols.h"
 
 /* Greybus public key authentication types */
-#define GB_PKAUTH_TYPE_VERSION          0x7b
-#define GB_PKAUTH_TYPE_PUBKEY           0x7c
-#define GB_PKAUTH_TYPE_CHALLENGE        0x7d
-#define GB_PKAUTH_TYPE_CHALLENGE_RESP   0x7e
+#define GB_PKAUTH_TYPE_VERSION          0x7a
+#define GB_PKAUTH_TYPE_PUBKEY           0x7b
+#define GB_PKAUTH_TYPE_CHALLENGE        0x7c
+#define GB_PKAUTH_TYPE_CHALLENGE_RESP   0x7d
+#define GB_PKAUTH_TYPE_SESSION_KEY      0x7e
 
 #define GB_PKAUTH_VERSION_MAJOR 0x00
 #define GB_PKAUTH_VERSION_MINOR 0x01
@@ -177,9 +178,41 @@ int pkauth_decrypt_with_privkey(const uint8_t *ciphertext, size_t ciphertext_len
 /**
  * Authenticate with device over socket
  *
+ * In addition to public-key authentication, a symmetric key is generated
+ * that should be used in all subsequent transactions.
+ *
  * @param fd the file descriptor representing the connection
+ * @param session_key an output variable for the session key
+ * @param session_key_len the desired session key length
  *
  * @return 0 on success, otherwise a negative errno value on failure
  */
-int pkauth_enticate(int fd);
+int pkauth_enticate(int fd, uint8_t **session_key, size_t session_key_len);
+
+/**
+ * Read one Greybus message over a public-key authenticated and SSL-secured socket
+ *
+ * @param fd the socket file descriptor to read from
+ * @param session_key the session key previously negotiated with pkauth_enticate
+ * @param session_key_len the length of the session key
+ * @param data an output buffer for data that is read
+ * @param data_len the size of the output buffer
+ *
+ * @return the number of bytes read on success, otherwise a negative errno value
+ */
+int pkauth_read(int fd, uint8_t *session_key, size_t session_key_len, uint8_t *data, size_t data_len);
+
+/**
+ * Write data over a public-key authenticated and SSL-secured socket
+ *
+ * @param fd the socket file descriptor to write to
+ * @param session_key the session key previously negotiated with pkauth_enticate
+ * @param session_key_len the length of the session key
+ * @param plaintext the data to write
+ * @param plaintext_len length of data to be written
+ *
+ * @return the number of bytes writeen on success, otherwise a negative errno value
+ */
+int pkauth_write(int fd, uint8_t *session_key, size_t session_key_len, uint8_t *plaintext, size_t plaintext_len);
+
 #endif /* PKAUTH_H_ */
