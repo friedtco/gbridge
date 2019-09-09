@@ -27,6 +27,41 @@
 #include <fcntl.h>
 #include <termios.h>
 #include <unistd.h>
+#include <stdio.h>
+#include <endian.h>
+
+void dump_msg(const char *func, struct gb_operation_msg_hdr *msg) {
+
+	unsigned msg_size = le16toh(msg->size);
+	unsigned msg_id = le16toh(msg->operation_id);
+	unsigned cport = (((unsigned)msg->pad[1]) << 8) | msg->pad[0];
+	unsigned payload_size = msg_size - 8;
+	uint8_t *byte;
+
+	pr_err(
+		"%s(): "
+		"size: %u, "
+		"id: %u, "
+		"type: %02x, "
+		"result: %u, "
+		"cport: %u, "
+		,
+		func,
+		msg_size,
+		msg_id,
+		msg->type,
+		msg->result,
+		cport
+	);
+	if (payload_size > 0) {
+		pr_err("payload: ");
+		byte = (uint8_t *)msg + sizeof(*msg);
+		for(size_t i = 0; i < payload_size; i++, byte++) {
+			pr_err("%02x ", (unsigned)(*byte));
+		}
+	}
+	pr_err("\n");
+}
 
 struct controller uart_controller;
 
@@ -52,8 +87,10 @@ int register_uart_controller(const char *file_name, int baudrate)
 	tio.c_iflag = IGNBRK;
 	tio.c_lflag = 0;
 	tio.c_oflag = 0;
+	tio.c_cc[VMIN] = 1; // 1 character minimum
+	tio.c_cc[VTIME] = 1; // 100ms timeout
 
-	uart_ctrl->fd = open(file_name, O_RDWR | O_NOCTTY | O_NDELAY);
+	uart_ctrl->fd = open(file_name, O_RDWR | O_NOCTTY);
 	if (uart_ctrl->fd < 0) {
 		free(uart_ctrl);
 		return uart_ctrl->fd;
@@ -113,9 +150,12 @@ static int uart_hotplug(struct controller *ctrl)
 
 static int uart_write(struct connection * conn, void *data, size_t len)
 {
-	struct uart_controller *ctrl = conn->intf->ctrl->priv;
+	struct uart_controller *ctrl = conn->intf2->ctrl->priv;
 
 	cport_pack(data, conn->cport2_id);
+
+	dump_msg(__func__, data);
+
 	return write(ctrl->fd, data, len);
 }
 
@@ -123,19 +163,25 @@ static int _uart_read(struct uart_controller *ctrl,
 		      void *data, size_t len)
 {
 	int ret;
-	uint8_t *p_data = data;
+	size_t remaining;
+	size_t offset;
+	size_t recvd;
 
-	while (len) {
-		ret = read(ctrl->fd, p_data, len);
-		if (ret == 0 || ret == -EAGAIN ||
-		    (ret == -1 && errno == -EAGAIN ))
-			usleep(10);
-		else if (ret < -1)
+	if (0 == len) {
+		return 0;
+	}
+
+	for(remaining = len, offset = 0, recvd = 0; remaining; remaining -= recvd, offset += recvd, recvd = 0) {
+		ret = read(ctrl->fd, &((uint8_t *)data)[offset], remaining);
+		if (-1 == ret) {
+			if (EAGAIN == errno) {
+				continue;
+			}
+			ret = -errno;
+			pr_err("%s(): read: %s\n", __func__, strerror(errno));
 			return ret;
-		else {
-			len -= ret;
-			p_data += ret;
 		}
+		recvd = ret;
 	}
 
 	return 0;
@@ -167,6 +213,8 @@ static int uart_read(struct interface * intf,
 		pr_err("Failed to get the payload\n");
 		return ret;
 	}
+
+	dump_msg(__func__, data);
 
 	*cport_id = cport_unpack(data);
 

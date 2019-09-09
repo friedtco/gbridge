@@ -1147,7 +1147,7 @@ int pkauth_enticate(int fd, uint8_t **session_key, size_t session_key_len) {
 
 	if (!pkauth_initialized()) {
 		pr_err("pkauth not initialized\n");
-		r = -EINVAL;
+		r = 0;
 		goto out;
 	}
 
