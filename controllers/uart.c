@@ -150,13 +150,31 @@ static int uart_hotplug(struct controller *ctrl)
 
 static int uart_write(struct connection * conn, void *data, size_t len)
 {
+	int r;
+	size_t remaining;
+	size_t offset;
+	size_t written;
+
 	struct uart_controller *ctrl = conn->intf2->ctrl->priv;
 
 	cport_pack(data, conn->cport2_id);
 
 	dump_msg(__func__, data);
 
-	return write(ctrl->fd, data, len);
+	for(remaining = len, offset = 0, written = 0; remaining; remaining -= written, offset += written, written = 0) {
+		r = write(ctrl->fd, &((uint8_t *)data)[offset], remaining);
+		if (-1 == r) {
+			r = -errno;
+			pr_err("%s(): write failed: %s\n", __func__, strerror(errno));
+			goto out;
+		}
+		written = r;
+	}
+
+	r = len;
+
+out:
+	return r;
 }
 
 static int _uart_read(struct uart_controller *ctrl,
@@ -193,6 +211,8 @@ static int uart_read(struct interface * intf,
 	int ret;
 	uint8_t *p_data = data;
 	struct uart_controller *ctrl = intf->ctrl->priv;
+	size_t msg_size;
+	size_t payload_size;
 
 	ret = _uart_read(ctrl, p_data, sizeof(struct gb_operation_msg_hdr));
 	if (ret) {
@@ -200,17 +220,13 @@ static int uart_read(struct interface * intf,
 		return ret;
 	}
 
-	ret = gb_operation_msg_size(data);
-	if (ret > len) {
-		pr_err("Message to big\n");
-		return -EMSGSIZE;	/* FIXME: drop remaining data */
-	}
-
+	msg_size = gb_operation_msg_size(data);
+	payload_size = msg_size - sizeof(struct gb_operation_msg_hdr);
 	p_data += sizeof(struct gb_operation_msg_hdr);
-	len = ret - sizeof(struct gb_operation_msg_hdr);
-	ret = _uart_read(ctrl, p_data, len);
-	if (ret) {
-		pr_err("Failed to get the payload\n");
+
+	ret = _uart_read(ctrl, p_data, payload_size);
+	if (ret < 0) {
+		pr_err("Failed to get payload\n");
 		return ret;
 	}
 
@@ -218,7 +234,7 @@ static int uart_read(struct interface * intf,
 
 	*cport_id = cport_unpack(data);
 
-	return len + sizeof(struct gb_operation_msg_hdr);
+	return msg_size;
 }
 
 struct controller uart_controller = {
