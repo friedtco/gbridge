@@ -150,13 +150,31 @@ static int uart_hotplug(struct controller *ctrl)
 
 static int uart_write(struct connection * conn, void *data, size_t len)
 {
+	int r;
+	size_t remaining;
+	size_t offset;
+	size_t written;
+
 	struct uart_controller *ctrl = conn->intf2->ctrl->priv;
 
 	cport_pack(data, conn->cport2_id);
 
 	dump_msg(__func__, data);
 
-	return write(ctrl->fd, data, len);
+	for(remaining = len, offset = 0; remaining; remaining -= written, offset += written) {
+		r = write(ctrl->fd, data, len);
+		if (-1 == r) {
+			r = -errno;
+			pr_err("%s(): write failed: %s\n", __func__, strerror(errno));
+			goto out;
+		}
+		written = r;
+	}
+
+	r = len;
+
+out:
+	return r;
 }
 
 static int _uart_read(struct uart_controller *ctrl,
