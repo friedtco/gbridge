@@ -69,6 +69,51 @@ struct uart_controller {
 	int fd;
 };
 
+static speed_t to_speed_t( int baudrate ) {
+
+#define _case( x ) case x: return B ## x
+
+	switch( baudrate ) {
+	_case( 0 );
+	_case( 50 );
+	_case( 75 );
+	_case( 110 );
+	_case( 134 );
+	_case( 150 );
+	_case( 200 );
+	_case( 300 );
+	_case( 600 );
+	_case( 1200 );
+	_case( 1800 );
+	_case( 2400 );
+	_case( 4800 );
+	_case( 9600 );
+	_case( 19200 );
+	_case( 38400 );
+	_case( 57600 );
+	_case( 115200 );
+	_case( 230400 );
+	_case( 460800 );
+	_case( 500000 );
+	_case( 576000 );
+	_case( 921600 );
+	_case( 1000000 );
+	_case( 1152000 );
+	_case( 1500000 );
+	_case( 2000000 );
+	_case( 2500000 );
+	_case( 3000000 );
+	_case( 3500000 );
+	_case( 4000000 );
+	default:
+		pr_err( "%d is not a recognized baud rate\n", baudrate );
+		return -1;
+	}
+
+#undef _case
+
+}
+
 int register_uart_controller(const char *file_name, int baudrate)
 {
 	int ret;
@@ -76,25 +121,25 @@ int register_uart_controller(const char *file_name, int baudrate)
 	struct controller *ctrl;
 	struct uart_controller *uart_ctrl;
 
+	speed_t speed = to_speed_t(baudrate);
+	if ((speed_t)-1 == speed) {
+		return -EINVAL;
+	}
+
 	uart_ctrl = malloc(sizeof(*uart_ctrl));
 	if (!uart_ctrl)
 		return -ENOMEM;
-
-	tcgetattr(uart_ctrl->fd, &tio);
-	cfsetospeed(&tio, baudrate);
-	cfsetispeed(&tio, baudrate);
-	tio.c_cflag = CS8 | CREAD;
-	tio.c_iflag = IGNBRK;
-	tio.c_lflag = 0;
-	tio.c_oflag = 0;
-	tio.c_cc[VMIN] = 1; // 1 character minimum
-	tio.c_cc[VTIME] = 1; // 100ms timeout
 
 	uart_ctrl->fd = open(file_name, O_RDWR | O_NOCTTY);
 	if (uart_ctrl->fd < 0) {
 		free(uart_ctrl);
 		return uart_ctrl->fd;
 	}
+
+	cfmakeraw(&tio);
+	cfsetspeed(&tio, speed);
+	tio.c_cc[VMIN] = 1; // 1 character minimum
+	tio.c_cc[VTIME] = 1; // 100ms timeout
 
 	ret = tcsetattr(uart_ctrl->fd, TCSANOW, &tio);
 	if (ret < 0) {
