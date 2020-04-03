@@ -64,7 +64,7 @@ struct tcpip_controller {
 static int tcpip_connection_create(struct connection *conn)
 {
 	int ret;
-	struct sockaddr_in serv_addr;
+	struct sockaddr_in6 serv_addr;
 	struct tcpip_connection *tconn;
 	struct tcpip_device *td = conn->intf2->priv;
 
@@ -72,7 +72,7 @@ static int tcpip_connection_create(struct connection *conn)
 	if (!tconn)
 		return -ENOMEM;
 
-	tconn->sock = socket(AF_INET, SOCK_STREAM, 0);
+	tconn->sock = socket(AF_INET6, SOCK_STREAM, 0);
 	if (tconn->sock < 0) {
 		pr_err("Can't create socket\n");
 		return tconn->sock;
@@ -80,15 +80,19 @@ static int tcpip_connection_create(struct connection *conn)
 	conn->priv = tconn;
 
 	memset(&serv_addr, 0, sizeof(serv_addr));
-	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_port = htons(td->port + conn->cport2_id);
-	serv_addr.sin_addr.s_addr = inet_addr(td->addr);
+	serv_addr.sin6_family = AF_INET6;
+	serv_addr.sin6_port = htons(td->port + conn->cport2_id);
+#if 0
+	serv_addr.sin6_addr.s_addr = inet_addr(td->addr);
+#else
+	inet_pton(AF_INET6, td->addr, &serv_addr.sin6_addr);
+#endif
 
 	pr_info("Trying to connect to module at %s:%d\n", td->addr, td->port);
 	do {
 		ret = connect(tconn->sock,
 			      (struct sockaddr *)&serv_addr,
-			      sizeof(struct sockaddr));
+			      sizeof(serv_addr));
 		if (ret)
 			sleep(1);
 	} while (ret);
@@ -131,16 +135,17 @@ static void tcpip_hotplug(struct controller *ctrl, const char *host_name,
 	if (!td)
 		goto exit;
 
+#if 0
 	td->port = port;
 	avahi_address_snprint(td->addr, sizeof(td->addr), address);
 	td->host_name = malloc(strlen(host_name) + 1);
+#else
+	td->port = 4242;
+	snprintf(td->addr, sizeof(td->addr), "2001:db8::1");
+#endif
 	if (!td->host_name)
 		goto err_free_td;
 	strcpy(td->host_name, host_name);
-
-	if ( 0 != strcmp( "127.0.0.1", td->addr ) ) {
-		goto err_free_td;
-	}
 
 	/* FIXME: use real IDs */
 	intf = interface_create(ctrl, 1, 1, 0x1234, td);
@@ -293,6 +298,12 @@ static int avahi_discovery(struct controller *ctrl)
 	}
 
 	tcpip_ctrl->simple_poll = simple_poll;
+
+#if 1
+	tcpip_hotplug(ctrl, "ble", NULL, 4242);
+#endif
+
+
 	avahi_simple_poll_loop(simple_poll);
 
 	avahi_service_browser_free(sb);
@@ -307,7 +318,6 @@ err_simple_pool_free:
 static void avahi_discovery_stop(struct controller *ctrl)
 {
 	struct tcpip_controller *tcpip_ctrl = ctrl->priv;
-
 	avahi_simple_poll_quit(tcpip_ctrl->simple_poll);
 }
 
