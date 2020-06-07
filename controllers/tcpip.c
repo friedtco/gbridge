@@ -42,6 +42,8 @@
 #include "pkauth.h"
 #endif
 
+extern void dump_msg(const char *func, struct gb_operation_msg_hdr *msg);
+
 struct tcpip_connection {
 	int sock;
 #if SSL
@@ -329,7 +331,37 @@ static int tcpip_write(struct connection *conn, void *data, size_t len)
 		return pkauth_write(tconn->sock, tconn->session_key, tconn->session_key_len, data, len);
 	}
 #endif
+
+	dump_msg(__func__, data);
+
 	return write(tconn->sock, data, len);
+}
+
+static int _tcpip_read(int fd, void *data, size_t len)
+{
+	int ret;
+	size_t remaining;
+	size_t offset;
+	size_t recvd;
+
+	if (0 == len) {
+		return 0;
+	}
+
+	for(remaining = len, offset = 0, recvd = 0; remaining; remaining -= recvd, offset += recvd, recvd = 0) {
+		ret = read(fd, &((uint8_t *)data)[offset], remaining);
+		if (-1 == ret) {
+			if (EAGAIN == errno) {
+				continue;
+			}
+			ret = -errno;
+			pr_err("%s(): read: %s\n", __func__, strerror(errno));
+			return ret;
+		}
+		recvd = ret;
+	}
+
+	return 0;
 }
 
 static int tcpip_read(struct connection *conn, void *data, size_t len)
@@ -340,7 +372,31 @@ static int tcpip_read(struct connection *conn, void *data, size_t len)
 		return pkauth_read(tconn->sock, tconn->session_key, tconn->session_key_len, data, len);
 	}
 #endif
-	return read(tconn->sock, data, len);
+
+	int ret;
+	uint8_t *p_data = data;
+	size_t msg_size;
+	size_t payload_size;
+
+	ret = _tcpip_read(tconn->sock, p_data, sizeof(struct gb_operation_msg_hdr));
+	if (ret) {
+		pr_err("Failed to get header\n");
+		return ret;
+	}
+
+	msg_size = gb_operation_msg_size(data);
+	payload_size = msg_size - sizeof(struct gb_operation_msg_hdr);
+	p_data += sizeof(struct gb_operation_msg_hdr);
+
+	ret = _tcpip_read(tconn->sock, p_data, payload_size);
+	if (ret < 0) {
+		pr_err("Failed to get payload\n");
+		return ret;
+	}
+
+	dump_msg(__func__, data);
+
+	return msg_size;
 }
 
 static int tcpip_init(struct controller *ctrl)
